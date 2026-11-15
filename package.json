@@ -1,0 +1,54 @@
+{
+  "name": "yunzai-plugin-bilibili",
+  "version": "1.1.0",
+  "description": "B 站视频链接解析：自动识别消息中的 B 站链接，出信息卡片、可选下载视频，带扫码登录与按群开关",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "webadapter",
+    "README.md",
+    "USAGE.md",
+    "LICENSE",
+    "docs"
+  ],
+  "keywords": [
+    "yunzai",
+    "yunzai-ng",
+    "plugin",
+    "bilibili",
+    "qq"
+  ],
+  "author": "AQiaoYo",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -p tsconfig.json --watch",
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@yunzai-ng/core": ">=0.7.0"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/qrcode": "^1.5.5",
+    "@yunzai-ng/core": "^0.7.0",
+    "@yunzai-ng/types": "^0.4.4",
+    "typescript": "^5.7.3"
+  }
+}

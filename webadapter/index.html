@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>B站解析</title>
+    <!--
+      面板把扩展页面装进不带 allow-same-origin 的 iframe：面板的样式与令牌都进不来。
+      引一行 SDK 即可拿到设计令牌（--text / --panel / --accent 等）并跟随亮暗主题。
+    -->
+    <script src="/theme-sdk.js" data-base></script>
+    <style>
+      :root {
+        --line: var(--border, #e4e8ed);
+        --muted: var(--text-2, #61666d);
+        --pink: var(--accent, #fb7299);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 20px;
+        background: transparent;
+        color: var(--text, #18191c);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      .card {
+        background: var(--panel, #fff);
+        border: 1px solid var(--line);
+        border-radius: var(--r-card, 14px);
+        padding: 18px 20px;
+      }
+      header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      .logo {
+        width: 44px; height: 44px; border-radius: 12px; flex: none;
+        display: grid; place-items: center;
+        background: color-mix(in srgb, var(--pink) 16%, transparent);
+        color: var(--pink);
+      }
+      h1 { font-size: 18px; margin: 0; }
+      .sub { color: var(--muted); font-size: 13px; }
+      .chips { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+      .chip {
+        padding: 4px 10px; border-radius: 999px; font-size: 12px;
+        border: 1px solid var(--line); color: var(--muted);
+      }
+      .chip.on { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 40%, transparent); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+      .metric { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+      .metric .k { color: var(--muted); font-size: 12px; }
+      .metric .v { font-size: 24px; font-weight: 700; margin-top: 2px; }
+      .metric .v small { font-size: 13px; font-weight: 400; color: var(--muted); }
+      h2 { font-size: 15px; margin: 0 0 12px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+      th { color: var(--muted); font-weight: 500; }
+      tr:last-child td { border-bottom: none; }
+      .tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+      .tag.on { color: #18a058; border-color: color-mix(in srgb, #18a058 40%, transparent); }
+      .tag.off { color: #d03050; border-color: color-mix(in srgb, #d03050 40%, transparent); }
+      .grow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+      .grow:last-child { border-bottom: none; }
+      .avatar { width: 32px; height: 32px; border-radius: 9px; flex: none; object-fit: cover; background: var(--line); }
+      .grow .meta { min-width: 0; flex: 1; }
+      .grow .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .grow .no { color: var(--muted); font-size: 12px; }
+      .recent { display: flex; flex-direction: column; gap: 10px; }
+      .row { display: flex; gap: 10px; align-items: baseline; }
+      .row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row .m { color: var(--muted); font-size: 12px; flex: none; }
+      .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 40px; }
+      .kv div { display: flex; gap: 12px; font-size: 13px; padding: 5px 0; align-items: baseline; }
+      .kv span:first-child { color: var(--muted); flex: none; width: 76px; }
+      .kv span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      @media (max-width: 720px) { .kv { grid-template-columns: minmax(0, 1fr); } }
+      .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+      .foot { color: var(--muted); font-size: 12px; text-align: center; }
+
+      /* 账号卡片：标题与按钮同一行 */
+      .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+      .head h2 { margin: 0; }
+      .head .actions { margin-left: auto; display: flex; gap: 8px; }
+      .btn {
+        font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 8px; cursor: pointer;
+        border: 1px solid var(--line); background: transparent; color: var(--text, #18191c);
+        transition: border-color .15s, color .15s, background .15s;
+      }
+      .btn:hover { border-color: var(--pink); color: var(--pink); }
+      .btn.primary { background: var(--pink); border-color: var(--pink); color: #fff; }
+      .btn.primary:hover { filter: brightness(1.05); color: #fff; }
+      .btn.danger:hover { border-color: #d03050; color: #d03050; }
+      .btn[disabled] { opacity: .55; cursor: default; }
+
+      /* 二维码弹层：iframe 内 fixed 即可，无需关心父页面滚动 */
+      .overlay {
+        position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+        background: rgba(0, 0, 0, .45); padding: 20px;
+      }
+      .overlay[hidden] { display: none; }
+      .modal {
+        width: min(380px, 100%); background: var(--panel, #fff); border-radius: 14px;
+        padding: 18px 20px 16px; box-shadow: 0 18px 48px rgba(0, 0, 0, .22);
+      }
+      .modal-head { display: flex; align-items: center; margin-bottom: 4px; }
+      .modal-head strong { font-size: 15px; }
+      .modal-head .btn { margin-left: auto; }
+      .qr { display: grid; place-items: center; gap: 10px; padding: 14px 0 6px; min-height: 236px; }
+      .qr img {
+        width: 216px; height: 216px; display: block; border-radius: 8px;
+        image-rendering: pixelated; background: #fff;
+      }
+      .qr .hint { color: var(--muted); font-size: 13px; text-align: center; word-break: break-all; }
+      .qr .hint a { color: var(--pink); }
+      .qr .spinner {
+        width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line);
+        border-top-color: var(--pink); animation: spin .8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .modal-foot { display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+      .modal-foot span { color: var(--muted); font-size: 12px; flex: 1; }
+      .modal-foot .btn { padding: 4px 10px; font-size: 12px; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+             background: color-mix(in srgb, var(--text) 6%, transparent); padding: 1px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <header>
+          <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="7" width="18" height="12" rx="2" />
+              <path d="M8 21h8M12 19v2M10 11l4 2-4 2z" />
+            </svg>
+          </div>
+          <div>
+            <h1>B站解析</h1>
+            <div class="sub" id="sub">正在读取状态…</div>
+          </div>
+          <div class="chips" id="chips"></div>
+        </header>
+      </div>
+
+      <div class="grid" id="metrics"></div>
+
+      <div class="card">
+        <div class="head">
+          <h2>账号</h2>
+          <div class="actions">
+            <button class="btn primary" id="loginBtn" type="button">扫码登录</button>
+            <button class="btn danger" id="logoutBtn" type="button" hidden>退出登录</button>
+          </div>
+        </div>
+        <div class="kv" id="account"></div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <h2>群白名单 / 黑名单</h2>
+          <div class="actions">
+            <button class="btn" id="reloadGroups" type="button">刷新群列表</button>
+          </div>
+        </div>
+        <div class="sub" id="mode" style="margin-bottom: 10px"></div>
+        <div id="joined"></div>
+      </div>
+
+      <div class="card">
+        <h2>最近解析</h2>
+        <div class="recent" id="recent"></div>
+      </div>
+
+      <div class="card">
+        <h2>当前设置</h2>
+        <div class="kv" id="config"></div>
+        <div class="empty" style="margin-top: 10px">
+          这里只读。其余项去「插件 → bilibili → 配置」改；群黑名单在上面点选即可。
+          扫码登录点上面的「扫码登录」；面板打不开时，主人私聊 <code>#bili登录</code> 仍可用。
+        </div>
+      </div>
+
+      <div class="foot" id="foot"></div>
+    </div>
+
+    <!-- 扫码登录弹层 -->
+    <div class="overlay" id="overlay" hidden>
+      <div class="modal">
+        <div class="modal-head">
+          <strong>扫码登录 B 站</strong>
+          <button class="btn" id="closeQr" type="button">关闭</button>
+        </div>
+        <div class="qr">
+          <div class="spinner" id="qrSpinner"></div>
+          <img id="qrImg" alt="B 站登录二维码" hidden />
+          <div class="hint" id="qrHint" hidden></div>
+        </div>
+        <div class="modal-foot">
+          <span id="qrStatus">请用 B 站手机客户端扫码</span>
+          <button class="btn" id="refreshQr" type="button">刷新二维码</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ── 与面板之间的唯一通道 ────────────────────────────────────────────────
+      // iframe 不透明，脚本拿不到令牌，也读不到 window.parent 的任何属性；
+      // 取数一律 postMessage 回面板，由面板带着令牌转发（见文档「扩展页面」）。
+      const pending = new Map()
+      let seq = 0
+
+      window.addEventListener("message", event => {
+        const reply = event.data
+        if (!reply || reply.kind !== "yunzai-ng.custom") return
+        const resolve = pending.get(reply.id)
+        if (resolve === undefined) return
+        pending.delete(reply.id)
+        resolve(reply)
+      })
+
+      /**
+       * 取一个接口的数据
+       * @param {string} path 接口路径
+       * @param {boolean} self 本插件自建接口时为 true
+       */
+      function fetchApi(path, self = false) {
+        const id = ++seq
+        return new Promise(resolve => {
+          pending.set(id, resolve)
+          parent.postMessage({ kind: "yunzai-ng.custom", id, path, self }, "*")
+        })
+      }
+
+      /** 转义，避免标题里的 < > 破坏结构 */
+      function esc(value) {
+        return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])
+      }
+
+      function el(id) {
+        return document.getElementById(id)
+      }
+
+      function metrics(data) {
+        const items = [
+          { k: "累计解析", v: data.stats.total, unit: "次" },
+          { k: "今日解析", v: data.stats.today, unit: "次" },
+          { k: "冷却中", v: data.cacheSize, unit: "条" },
+          { k: "已运行", v: "", text: data.uptime }
+        ]
+        el("metrics").innerHTML = items
+          .map(item => `<div class="metric"><div class="k">${esc(item.k)}</div><div class="v">${
+            item.text !== undefined ? esc(item.text) : esc(item.v) + `<small> ${esc(item.unit)}</small>`
+          }</div></div>`)
+          .join("")
+      }
+
+      function account(data) {
+        const login = data.login || {}
+        const rows = [
+          ["登录状态", login.loggedIn ? '<span class="tag on">已登录</span>' : '<span class="tag off">未登录</span>'],
+          ["昵称", login.uname ? esc(login.uname) : "—"],
+          ["UID", login.mid ? esc(login.mid) : "—"],
+          ["登录时间", login.loginTime ? new Date(login.loginTime).toLocaleString("zh-CN") : "—"]
+        ]
+        el("account").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")
+      }
+
+      function recent(data) {
+        const list = data.recent || []
+        if (list.length === 0) {
+          el("recent").innerHTML = '<div class="empty">还没有解析记录。</div>'
+          return
+        }
+        el("recent").innerHTML = list
+          .map(item => `<div class="row"><span class="t">${esc(item.title)}</span><span class="m">${
+            esc(item.group || item.gid)
+          } · ${new Date(item.at).toLocaleTimeString("zh-CN")}</span></div>`)
+          .join("")
+      }
+
+      function config(data) {
+        const c = data.config || {}
+        const rows = [
+          ["总开关", c.enabled ? "开" : "关"],
+          ["发送模式", c.sendMode === "with-video" ? "信息 + 视频" : "仅信息"],
+          ["渲染卡片", c.renderCard ? "开" : "关"],
+          ["合并转发", c.cardAsForward ? "开" : "关"],
+          ["画质", c.videoQuality],
+          ["视频上限", `${c.maxVideoSizeMB} MB`],
+          ["同群冷却", `${c.parseCacheTTL} 秒`],
+          ["私聊解析", c.parseInPrivate ? "开" : "关"]
+        ]
+        el("config").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${esc(v)}</span></div>`).join("")
+      }
+
+      function chips(data) {
+        const c = data.config || {}
+        const items = [
+          ["解析", c.enabled],
+          ["卡片", c.renderCard],
+          ["视频", c.sendMode === "with-video"],
+          ["登录", data.login && data.login.loggedIn]
+        ]
+        el("chips").innerHTML = items
+          .map(([label, on]) => `<span class="chip ${on ? "on" : ""}">${label}${on ? " 开" : " 关"}</span>`)
+          .join("")
+      }
+
+      // ── 群黑名单 ────────────────────────────────────────────────────────────
+      // 面板转发只认固定路径的 GET、不许带查询串，写操作走不过去。所以口令由面板那条
+      // 带鉴权的通道取回，页面再拿它直连插件自己的 /panel/* 路由（auth: false + CORS）。
+      let panelKey = ""
+      let snapshot = null
+      let joinedGroups = []
+
+      async function ensureKey() {
+        if (panelKey !== "") return true
+        const res = await fetchApi("panel", true)
+        const data = (res && res.data) || {}
+        panelKey = data.key || ""
+        return panelKey !== ""
+      }
+
+      /** 读回账号已加入的群（头像、群名由平台给，缺头像时用 QQ 群头像地址兜底） */
+      async function loadJoined() {
+        if (!(await ensureKey())) {
+          el("joined").innerHTML = '<div class="empty">拿不到口令，刷新页面再试。</div>'
+          return
+        }
+        el("joined").innerHTML = '<div class="empty">正在读取账号已加入的群…</div>'
+        try {
+          const res = await fetch(`/plugin/bilibili/panel/groups?k=${encodeURIComponent(panelKey)}`, { cache: "no-store" })
+          const data = await res.json()
+          if (!data.ok) throw new Error(data.error || "读取失败")
+          joinedGroups = data.groups || []
+        } catch (error) {
+          el("joined").innerHTML = `<div class="empty">${esc(error instanceof Error ? error.message : String(error))}</div>`
+          return
+        }
+        renderJoined()
+      }
+
+      function renderJoined() {
+        const rows = (snapshot && snapshot.groups) || []
+        const blocked = new Set(rows.filter(group => group.blocked ?? group.enabled === false).map(group => group.gid))
+        const white = new Set(rows.filter(group => group.whitelisted).map(group => group.gid))
+        const active = !!(snapshot && snapshot.whitelistActive)
+
+        el("mode").textContent = active
+          ? "白名单生效中：只有名单内的群会解析，黑名单优先。只影响本插件，别的插件照常收消息。"
+          : "白名单为空：除黑名单里的群，其他群都解析。只影响本插件，别的插件照常收消息。"
+
+        // 名单里可能有已经退掉的群：一并列出来，否则解不掉
+        for (const gid of [...blocked, ...white]) {
+          if (!joinedGroups.some(group => group.gid === gid)) {
+            const known = rows.find(group => group.gid === gid)
+            joinedGroups.push({
+              gid,
+              name: (known && known.name) || "",
+              avatar: `https://p.qlogo.cn/gh/${gid}/${gid}/100/`
+            })
+          }
+        }
+        if (joinedGroups.length === 0) {
+          el("joined").innerHTML = '<div class="empty">账号还没加入任何群，或者适配器不支持列群。</div>'
+          return
+        }
+
+        const rank = gid => (blocked.has(gid) ? 0 : white.has(gid) ? 1 : 2)
+        el("joined").innerHTML = joinedGroups
+          .slice()
+          .sort((a, b) => rank(a.gid) - rank(b.gid) || a.gid.localeCompare(b.gid))
+          .map(group => {
+            const off = blocked.has(group.gid)
+            const inWhite = white.has(group.gid)
+            return `<div class="grow">
+              <img class="avatar" src="${esc(group.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
+              <div class="meta">
+                <div class="name">${esc(group.name || "（没有群名）")}${
+                  off ? ' <span class="tag off">已拉黑</span>' : inWhite ? ' <span class="tag on">白名单</span>' : ""
+                }</div>
+                <div class="no">${esc(group.gid)}</div>
+              </div>
+              <button class="btn" type="button" data-gid="${esc(group.gid)}" data-list="white" data-on="${
+                inWhite ? "0" : "1"
+              }">${inWhite ? "移出白名单" : "白名单"}</button>
+              <button class="btn ${off ? "" : "danger"}" type="button" data-gid="${esc(group.gid)}" data-list="black" data-on="${
+                off ? "0" : "1"
+              }">${off ? "解除" : "拉黑"}</button>
+            </div>`
+          })
+          .join("")
+      }
+
+      async function toggleListed(gid, list, on, button) {
+        if (!(await ensureKey())) return
+        button.disabled = true
+        try {
+          const res = await fetch(
+            `/plugin/bilibili/panel/list?k=${encodeURIComponent(panelKey)}&gid=${encodeURIComponent(gid)}&list=${list}&on=${on ? 1 : 0}`,
+            { cache: "no-store" }
+          )
+          const data = await res.json()
+          if (!data.ok) throw new Error(data.error || "操作失败")
+          // 快照是节流落盘的，别等它：先把本地这份改掉，界面立刻就是对的
+          if (snapshot !== null) {
+            const row = (snapshot.groups || []).find(group => group.gid === gid)
+            if (row !== undefined) {
+              if (list === "white") row.whitelisted = on
+              else row.blocked = on
+              row.enabled = !row.blocked && (!snapshot.whitelistActive || row.whitelisted)
+            } else {
+              (snapshot.groups ||= []).push({
+                gid,
+                enabled: list === "white" ? on : !on,
+                blocked: list === "black" ? on : false,
+                whitelisted: list === "white" ? on : false
+              })
+            }
+            snapshot.whitelistActive = (data.groupWhitelist || []).length > 0
+          }
+          renderJoined()
+        } catch (error) {
+          el("foot").textContent = `操作失败：${error instanceof Error ? error.message : String(error)}`
+        } finally {
+          button.disabled = false
+        }
+      }
+
+      // ── 扫码登录 ────────────────────────────────────────────────────────────
+      // 二维码在插件进程里生成，页面只负责显示与轮询。三者都走面板转发：iframe 没有
+      // 令牌，直连插件路由会 401，这是唯一能到达后端的通道。
+      const SUCCESS = 0
+      const SCANNED = 86090
+      const EXPIRED = 86038
+      let pollTimer = null
+      let logoutArmed = false
+
+      function stopPolling() {
+        if (pollTimer !== null) {
+          clearTimeout(pollTimer)
+          pollTimer = null
+        }
+      }
+
+      /** 请求一张新二维码 */
+      async function requestQr() {
+        stopPolling()
+        el("qrSpinner").hidden = false
+        el("qrImg").hidden = true
+        el("qrImg").removeAttribute("src")
+        el("qrHint").hidden = true
+        el("qrStatus").textContent = "正在生成二维码…"
+
+        const res = await fetchApi("login/qr", true)
+        const data = (res && res.data) || {}
+        el("qrSpinner").hidden = true
+        if (!res.ok || !data.ok) {
+          el("qrStatus").textContent = (res && res.error) || data.error || "生成失败"
+          return
+        }
+        if (data.image) {
+          el("qrImg").src = data.image
+          el("qrImg").hidden = false
+        } else {
+          // 插件没装 qrcode 依赖时的降级：把链接摆出来，复制到手机浏览器一样能登
+          el("qrHint").innerHTML = `没装 <code>qrcode</code> 依赖，复制这个链接到手机浏览器打开：<br><code>${esc(data.url)}</code>`
+          el("qrHint").hidden = false
+        }
+        el("qrStatus").textContent = "请用 B 站手机客户端扫码（3 分钟内有效）"
+        pollTimer = setTimeout(pollOnce, 1500)
+      }
+
+      /** 问一次扫码结果 */
+      async function pollOnce() {
+        const res = await fetchApi("login/poll", true)
+        const data = (res && res.data) || {}
+        if (!res.ok || !data.ok) {
+          el("qrStatus").textContent = (res && res.error) || data.error || "轮询失败"
+          pollTimer = setTimeout(pollOnce, 4000)
+          return
+        }
+        if (data.status === SUCCESS) {
+          stopPolling()
+          el("qrStatus").textContent = "登录成功，正在刷新…"
+          setTimeout(() => {
+            closeQr()
+            refresh()
+          }, 700)
+          return
+        }
+        if (data.status === EXPIRED) {
+          el("qrStatus").textContent = data.message || "二维码已过期，请刷新"
+          return
+        }
+        el("qrStatus").textContent =
+          data.status === SCANNED ? "已扫码，请在手机上确认" : `等待扫码…（剩 ${data.remaining ?? 0} 秒）`
+        pollTimer = setTimeout(pollOnce, 2000)
+      }
+
+      function closeQr() {
+        stopPolling()
+        el("overlay").hidden = true
+      }
+
+      /** 退出登录：两段式，避免手滑把还能用的 Cookie 删了 */
+      async function doLogout() {
+        if (!logoutArmed) {
+          logoutArmed = true
+          el("logoutBtn").textContent = "确认退出？"
+          setTimeout(() => {
+            logoutArmed = false
+            el("logoutBtn").textContent = "退出登录"
+          }, 4000)
+          return
+        }
+        logoutArmed = false
+        el("logoutBtn").disabled = true
+        const res = await fetchApi("login/logout", true)
+        el("logoutBtn").disabled = false
+        el("logoutBtn").textContent = "退出登录"
+        if (!res.ok) {
+          el("foot").textContent = `退出失败：${(res && res.error) || "未知错误"}`
+          return
+        }
+        refresh()
+      }
+
+      async function refresh() {
+        const res = await fetchApi("status", true)
+        if (!res.ok) {
+          el("sub").textContent = "读取失败：" + (res.error || "未知错误")
+          return
+        }
+        const data = res.data || {}
+        if (data.missing) {
+          el("sub").textContent = data.hint || "插件还没写下状态"
+          el("metrics").innerHTML = ""
+          return
+        }
+        el("sub").textContent = `v${data.version} · 更新于 ${new Date(data.updatedAt).toLocaleTimeString("zh-CN")}`
+        snapshot = data
+        chips(data)
+        metrics(data)
+        account(data)
+        renderJoined()
+        recent(data)
+        config(data)
+        // 已登录就只留「退出」，未登录才给「扫码」——两个都摆出来会让人以为可以同时点
+        const loggedIn = !!(data.login && data.login.loggedIn)
+        el("loginBtn").hidden = loggedIn
+        el("logoutBtn").hidden = !loggedIn
+        el("foot").textContent = "数据来自插件写下的状态快照，每 10 秒刷新一次"
+      }
+
+      el("loginBtn").addEventListener("click", () => {
+        el("overlay").hidden = false
+        requestQr()
+      })
+      el("logoutBtn").addEventListener("click", doLogout)
+      el("closeQr").addEventListener("click", closeQr)
+      el("refreshQr").addEventListener("click", requestQr)
+      el("overlay").addEventListener("click", event => {
+        if (event.target === el("overlay")) closeQr()
+      })
+
+      el("joined").addEventListener("click", event => {
+        const button = event.target.closest("button[data-gid]")
+        if (button === null) return
+        toggleListed(button.dataset.gid, button.dataset.list === "white" ? "white" : "black", button.dataset.on === "1", button)
+      })
+      el("reloadGroups").addEventListener("click", loadJoined)
+
+      refresh()
+      loadJoined()
+      setInterval(refresh, 10_000)
+      // 主题切换时无需重取数据，CSS 变量由 SDK 自动更新
+    </script>
+  </body>
+</html>

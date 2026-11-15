@@ -1,0 +1,118 @@
+import { cleanupFile, containsBilibiliLink, extractLinkFromSegments } from "../services/bilibili.js";
+import { deliver, react } from "./card.js";
+/** 自动解析的中间件优先级：比默认的 100 靠里，让改写类中间件先跑 */
+const PRIORITY = 200;
+/**
+ * 注册自动解析中间件
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @returns 注销句柄
+ */
+export function registerAutoParse(app, api) {
+    return app.ctx.middleware(async (e, next) => {
+        if (e.kind !== "message")
+            return next();
+        if (!app.config.enabled)
+            return next();
+        if (!shouldConsider(app, e))
+            return next();
+        try {
+            const handled = await tryParse(app, api, e);
+            // 解析成功就不再往下走：同一条消息交给别的插件再解析一遍，群里会出两份。
+            //
+            // 这里显式 `e.stop()`，而不是「什么都不做直接 return」：两种写法效果一样，
+            // 但后者内核会在 trace 里记一句「中间件未调用 next()，事件到此中断」，日志
+            // 文件按设计记全量，于是每解析一条就多一行，看着像报错。`stop()` 是内核
+            // 认可的「这条我收了」，不产生那行噪音，也不影响后续中间件的语义。
+            if (handled) {
+                e.stop();
+                return;
+            }
+        }
+        catch (error) {
+            // 中间件抛错会打断整条管线，连命令都轮不到；这里兜住，把问题留在日志里
+            app.log("error", "自动解析异常", error);
+        }
+        return next();
+    }, { kind: "message", priority: PRIORITY });
+}
+/**
+ * 这条消息值不值得进入解析流程（纯内存判断，不碰网络）
+ * @param app 运行期状态
+ * @param e 消息事件
+ * @returns 值得则为真
+ */
+function shouldConsider(app, e) {
+    // 频道暂不支持：段模型能表达，但 B 站卡片的分页与视频上传在频道语义下对不上
+    if (e.scene === "guild")
+        return false;
+    if (e.scene === "private" && !app.config.parseInPrivate)
+        return false;
+    const text = e.text;
+    for (const prefix of app.config.ignorePrefixes ?? []) {
+        if (prefix !== "" && text.startsWith(prefix))
+            return false;
+    }
+    // 小程序卡片正文里没有链接，只有 json 段，故两种来源都要看
+    return containsBilibiliLink(text) || extractLinkFromSegments(e.message) !== null;
+}
+/**
+ * 解析并发送
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @param e 消息事件
+ * @returns 是否已处理（失败也算"处理过"，以免同一插件再试一遍）
+ */
+export async function tryParse(app, api, e) {
+    const target = extractLinkFromSegments(e.message) ?? e.text;
+    const gid = e.group?.gid ?? `private:${e.sender.uid}`;
+    // 黑名单里的群直接放行给后续插件：既不解析，也不把消息吞掉
+    if (e.isGroup && e.group !== undefined && !app.isGroupEnabled(e.group.gid))
+        return false;
+    if (app.config.parseCacheTTL > 0) {
+        const videoId = await api.extractVideoId(target);
+        if (videoId !== null && app.inCooldown(gid, videoId)) {
+            app.debug(`群 ${gid} 里 ${videoId} 还在冷却中，跳过`);
+            return true;
+        }
+    }
+    return runParse(app, api, e, target, gid);
+}
+/**
+ * 真正跑一次解析并投递
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @param e 消息事件
+ * @param target 待解析的文本或链接
+ * @param gid 群号（私聊时为 `private:<uid>`）
+ * @returns 是否已处理
+ */
+async function runParse(app, api, e, target, gid) {
+    const startedAt = Date.now();
+    await react(e, "10024");
+    const info = await api.parse(target);
+    if (info === null) {
+        app.debug("链接存在但解析失败，静默跳过");
+        return true;
+    }
+    app.debug(`解析成功 ${info.bvid}，耗时 ${Date.now() - startedAt}ms`);
+    let videoFile;
+    if (app.config.sendMode === "with-video") {
+        const file = await api.download(info, app.config.maxVideoSizeMB);
+        if (file !== null)
+            videoFile = file;
+        else
+            app.log("warn", `视频未下载，仅发送信息：${info.bvid}`);
+    }
+    const sent = await deliver(app, e, info, videoFile);
+    if (sent) {
+        await app.markParsed({ bvid: info.bvid, title: info.title, gid, group: e.group?.name });
+        app.touchCooldown(gid, info.bvid);
+        await react(e, "124");
+    }
+    if (videoFile !== undefined) {
+        // 发送接口返回时文件已被平台读完，但 QQ 侧可能仍在转码；留一分钟再删更稳妥
+        app.later(() => void cleanupFile(app, videoFile), 60_000);
+    }
+    return true;
+}
