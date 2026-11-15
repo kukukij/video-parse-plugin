@@ -734,6 +734,38 @@ test("黑名单里的群：不解析、也不吞消息，直接放行给后续�
   assert.equal(replied, 0)
 })
 
+test("下载前预检体积：超过上限直接跳过，不会真的去下", async () => {
+  const ctx = fakeCtx()
+  let downloads = 0
+  ctx.http = {
+    ...http,
+    async get(url) {
+      if (url.includes("/x/player/playurl")) {
+        return {
+          code: 0,
+          message: "0",
+          data: { dash: { video: [{ id: 80, codecid: 7, codecs: "avc1.640033", backupUrl: "https://cdn/v.m4v" }], audio: [] } }
+        }
+      }
+      throw new Error(`未预期的请求：${url}`)
+    },
+    async request() {
+      // HEAD 说这流有 500MB，远超上限
+      return { status: 200, ok: true, url: "", headers: { "content-length": String(500 * 1024 * 1024) }, data: undefined }
+    },
+    async download() {
+      downloads++
+      return "/tmp/never.mp4"
+    }
+  }
+
+  const api = new BilibiliApi(new BilibiliApp(ctx))
+  const file = await api.download({ bvid: "BV1GJ411x7h7", cid: 987654 }, 10)
+
+  assert.equal(file, null)
+  assert.equal(downloads, 0)
+})
+
 test("私聊解析不进群列表：`private:<uid>` 不是群号", async () => {
   const app = new BilibiliApp(fakeCtx())
   await app.restore()

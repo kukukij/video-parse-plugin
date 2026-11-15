@@ -526,6 +526,15 @@ export class BilibiliApi {
     const partialOutput = `${output}.part`
 
     try {
+      // 先问一句多大：超过上限就别下了。100MB 的流白下一遍，带宽与磁盘都白花，
+      // 最后还是会被同一道上限拒掉。HEAD 拿不到大小（少数 CDN 不给 content-length）
+      // 时照旧下载，下载完仍有一次体积复核。
+      const declared = await this.#probeSize(videoUrl)
+      if (declared !== null && declared / 1024 / 1024 > maxMB) {
+        this.#app.log("warn", `视频 ${formatSize(declared)} 超过上限 ${maxMB}MB，未下载`)
+        return null
+      }
+
       const videoBytes = await this.#download(videoUrl, videoPart)
       if (videoBytes === null) {
         // 失败时可能已经写了一半，留着只会在临时目录里越攒越多
@@ -577,6 +586,33 @@ export class BilibiliApi {
       await rm(partialOutput, { force: true })
       await rm(videoPart, { force: true })
       await rm(audioPart, { force: true })
+      return null
+    }
+  }
+
+  /**
+   * 用 HEAD 预检流的大小
+   *
+   * 只发头部请求、不取 body，代价是几百字节。拿不到 `content-length`（部分 CDN 对
+   * 分片地址不应答 HEAD）时返回 null，调用方照常下载 —— 预检失败不该让功能失效。
+   * @param url 流地址
+   * @returns 字节数；未知为 null
+   */
+  async #probeSize(url: string): Promise<number | null> {
+    try {
+      const res = await this.http.request(url, {
+        method: "HEAD",
+        headers: { ...BILI_HEADERS, Accept: "*/*" },
+        responseType: "none",
+        throwOnError: false,
+        timeout: "10s"
+      })
+      if (res.status < 200 || res.status >= 300) return null
+      const raw = res.headers["content-length"]
+      const bytes = Number.parseInt(typeof raw === "string" ? raw : "", 10)
+      return Number.isFinite(bytes) && bytes > 0 ? bytes : null
+    } catch (error) {
+      this.#app.debug("预检体积失败，按未知大小继续", error)
       return null
     }
   }
