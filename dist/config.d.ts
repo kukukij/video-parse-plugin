@@ -19,6 +19,15 @@ export declare const configSchema: import("@yunzai-ng/core").Schema<{
     maxVideoSizeMB: number;
     videoQuality: "auto" | "4k" | "1080p60" | "1080p" | "720p" | "480p";
     parseCacheTTL: number;
+    commentSend: boolean;
+    commentCount: number;
+    commentSort: "hot" | "time";
+    commentReplyCount: number;
+    commentMinLike: number;
+    commentShowLevel: boolean;
+    commentShowLocation: boolean;
+    commentShowEmote: boolean;
+    commentShowPictures: boolean;
     groupWhitelist: string[];
     groupBlacklist: string[];
     debug: boolean;

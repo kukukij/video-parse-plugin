@@ -105,6 +105,87 @@ export const configSchema = s.object({
     .group("视频")
     .order(40),
 
+  commentSend: s
+    .boolean()
+    .default(true)
+    .title("发送评论图")
+    .desc("解析后额外发一张评论区的图。关掉就完全不请求评论，也不发图")
+    .group("评论")
+    .order(10),
+
+  commentCount: s
+    .number()
+    .int()
+    .min(0)
+    .max(20)
+    .default(10)
+    .title("显示条数")
+    .desc("一张图里最多放几条主评论（1-20）。条数越多图越长；填 0 等于不发评论图，和关掉「发送评论图」一个效果")
+    .group("评论")
+    .order(20),
+
+  commentSort: s
+    .enum(["hot", "time"], { hot: "按热度", time: "按时间" })
+    .default("hot")
+    .title("排序方式")
+    .desc("按热度＝B 站默认的「热门评论」；按时间＝最新的在最前面")
+    .group("评论")
+    .order(30),
+
+  commentReplyCount: s
+    .number()
+    .int()
+    .min(0)
+    .max(3)
+    .default(2)
+    .title("楼中楼条数")
+    .desc("每条主评论下带几条回复（0-3）。0 表示只显示主评论")
+    .group("评论")
+    .order(40),
+
+  commentMinLike: s
+    .number()
+    .int()
+    .min(0)
+    .max(10000)
+    .default(0)
+    .title("最低点赞数")
+    .desc("主评论点赞数低于这个值就不显示，用来过滤「第一」「111」这类水评。0 表示不过滤")
+    .group("评论")
+    .order(50),
+
+  commentShowLevel: s
+    .boolean()
+    .default(true)
+    .title("显示等级")
+    .desc("昵称后面的 LV 徽章")
+    .group("评论")
+    .order(60),
+
+  commentShowLocation: s
+    .boolean()
+    .default(true)
+    .title("显示 IP 属地")
+    .desc("「广东」这类归属地，需要登录 B 站账号才会返回")
+    .group("评论")
+    .order(70),
+
+  commentShowEmote: s
+    .boolean()
+    .default(true)
+    .title("显示表情图")
+    .desc("把 [吃瓜] 这类表情换成 B 站的表情图；关掉就显示成文字标签")
+    .group("评论")
+    .order(80),
+
+  commentShowPictures: s
+    .boolean()
+    .default(true)
+    .title("显示评论配图")
+    .desc("评论里带的图片，最多 3 张")
+    .group("评论")
+    .order(90),
+
   groupWhitelist: s
     .tags()
     .default([])

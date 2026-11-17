@@ -80,9 +80,13 @@
         padding-top: 14px;
         border-top: 1px solid #f1f2f3;
       }
-      .stat { display: flex; flex-direction: column; gap: 3px; }
-      .stat .num { font-size: 17px; font-weight: 700; color: #18191c; }
-      .stat .label { font-size: 12px; color: #9499a0; }
+      /*
+        数字与标签都固定行高：`85.2万` 里的「万」是中文字形，行盒比纯数字高 5px，
+        不锁行高的话每个统计块的高度都不一样，下面那排标签就会参差不齐。
+      */
+      .stat { display: flex; flex-direction: column; gap: 2px; }
+      .stat .num { font-size: 17px; line-height: 23px; font-weight: 700; color: #18191c; }
+      .stat .label { font-size: 12px; line-height: 16px; color: #9499a0; }
       .foot {
         margin-top: 14px;
         display: flex;

@@ -15,8 +15,10 @@ const DIST = new URL("../dist/", import.meta.url)
 const load = path => import(pathToFileURL(join(DIST.pathname, path)).href)
 
 const { BilibiliApp } = await load("core/app.js")
-const { BilibiliApi, buildMergeArgs, containsBilibiliLink, extractBvid, extractLinkFromSegments } = await load("services/bilibili.js")
+const { BilibiliApi, buildMergeArgs, containsBilibiliLink, extractBvid, extractLinkFromSegments, streamUrls } =
+  await load("services/bilibili.js")
 const { deliver, cardData } = await load("handlers/card.js")
+const { sendComments } = await load("handlers/comments.js")
 const { encryptString, decryptString } = await load("utils/crypto.js")
 const { formatCount, formatDuration } = await load("utils/format.js")
 
@@ -764,6 +766,277 @@ test("下载前预检体积：超过上限直接跳过，不会真的去下", as
 
   assert.equal(file, null)
   assert.equal(downloads, 0)
+})
+
+test("评论映射：置顶去重、表情分段、图片转 https、楼中楼只留 2 条", async () => {
+  const ctx = fakeCtx()
+  ctx.http = {
+    ...http,
+    async get(url) {
+      assert.match(url, /\/x\/v2\/reply\/main/)
+      assert.match(url, /mode=3/)
+      assert.match(url, /oid=123/)
+      const now = Math.floor(Date.now() / 1000)
+      const shared = {
+        rpid: 1,
+        member: {
+          uname: "置顶的人",
+          avatar: "//i1.hdslb.com/top.jpg",
+          mid: 7,
+          level_info: { current_level: 6 },
+          vip: { vipType: 2, vipStatus: 1 }
+        },
+        content: { message: "置顶评论" },
+        like: 10,
+        ctime: now - 61 * 86400,
+        reply_control: { time_desc: "61天前发布", location: "IP属地：广东" }
+      }
+      return {
+        code: 0,
+        message: "0",
+        data: {
+          cursor: { all_count: 88 },
+          top_replies: [shared],
+          replies: [
+            shared,
+            {
+              rpid: 2,
+              member: {
+                uname: "老咸鱼",
+                avatar: "http://i1.hdslb.com/face.jpg",
+                mid: 42,
+                level_info: { current_level: 0 },
+                // 开通过大会员但已过期：vipType 还在，vipStatus 为 0
+                vip: { vipType: 1, vipStatus: 0 }
+              },
+              content: {
+                message: "好耶[吃瓜]就这样",
+                emote: { "[吃瓜]": { url: "http://i0.hdslb.com/e.png" } },
+                pictures: [{ img_src: "http://i0.hdslb.com/p.jpg", img_width: 100, img_height: 200 }]
+              },
+              like: 7,
+              ctime: now - 3 * 86400,
+              reply_control: { time_desc: "3天前发布", location: "IP属地：四川" },
+              replies: [
+                {
+                  rpid: 21,
+                  member: { uname: "甲", avatar: "//i1.hdslb.com/a.jpg", level_info: { current_level: 3 } },
+                  content: { message: "一" },
+                  like: 1,
+                  reply_control: { location: "IP属地：北京" }
+                },
+                { rpid: 22, member: { uname: "乙", avatar: "//i1.hdslb.com/b.jpg" }, content: { message: "二" }, like: 2 },
+                { rpid: 23, member: { uname: "丙", avatar: "//i1.hdslb.com/c.jpg" }, content: { message: "三" }, like: 3 }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+
+  const api = new BilibiliApi(new BilibiliApp(ctx))
+  const data = await api.fetchComments(123, 10, 42)
+
+  assert.equal(data.total, 88)
+  // 置顶与热评里的同一条按 rpid 去重
+  assert.equal(data.items.length, 2)
+  assert.equal(data.items[0].uname, "置顶的人")
+  // 超过一个月的评论按 B 站的样子显示日期（如「9月17日」），不是「61天前」
+  const older = new Date((Math.floor(Date.now() / 1000) - 61 * 86400) * 1000)
+  assert.equal(data.items[0].time, `${older.getMonth() + 1}月${older.getDate()}日`)
+  assert.equal(data.items[0].level, 6)
+  // 「IP属地：」前缀要去掉，只留省份
+  assert.equal(data.items[0].location, "广东")
+  // 置顶这位就是 UP（mid 与传入的 42 不同，故不是）
+  assert.equal(data.items[0].isUp, false)
+  // 有效期内的会员才算是大会员，昵称才挂粉色、头像才有「大」标
+  assert.equal(data.items[0].isVip, true)
+
+  const second = data.items[1]
+  // 表情被切成独立段，图片地址补成 https
+  assert.deepEqual(second.parts, [
+    { text: "好耶" },
+    { emote: { url: "https://i0.hdslb.com/e.png" } },
+    { text: "就这样" }
+  ])
+  assert.equal(second.pictures[0].url, "https://i0.hdslb.com/p.jpg")
+  assert.equal(second.avatar, "https://i1.hdslb.com/face.jpg")
+  // UP 主本人的评论打标
+  assert.equal(second.isUp, true)
+  assert.equal(second.time, "3天前")
+  assert.equal(second.location, "四川")
+  // 楼中楼只留 2 条
+  assert.equal(second.replies.length, 2)
+  assert.equal(second.replies[0].avatar, "https://i1.hdslb.com/a.jpg")
+  assert.equal(second.replies[0].level, 3)
+  assert.equal(second.replies[0].location, "北京")
+  // 接口没给等级时为 -1（模板据此跳过徽章），不能冒充 LV0
+  assert.equal(second.replies[0].isUp, false)
+  assert.equal(data.items[1].level, 0)
+  // vipType 还在但 vipStatus=0（已过期），不能当成会员
+  assert.equal(data.items[1].isVip, false)
+})
+
+test("流地址优先用 baseUrl，备选按原顺序跟上、不重复", () => {
+  // B 站给的 baseUrl 通常最稳；backupUrl 里可能有连上就断的 P2P 节点
+  assert.deepEqual(streamUrls({ baseUrl: "https://a/1.m4s", backupUrl: ["https://b/1.m4s", "https://a/1.m4s"] }), [
+    "https://a/1.m4s",
+    "https://b/1.m4s"
+  ])
+  // 没有 baseUrl 时退回备选
+  assert.deepEqual(streamUrls({ backupUrl: "https://b/1.m4s" }), ["https://b/1.m4s"])
+  // 都没有就是空
+  assert.deepEqual(streamUrls({}), [])
+})
+
+test("评论时间：昨天带时刻、两三天用「N天前」、更早给日期", async () => {
+  const ctx = fakeCtx()
+  // 按日历取中午 12 点，避免测试恰好在凌晨跑时「N 天前」被算成 N+1
+  const at = (daysAgo, hour = 12) => {
+    const d = new Date()
+    d.setHours(hour, 5, 0, 0)
+    d.setDate(d.getDate() - daysAgo)
+    return Math.floor(d.getTime() / 1000)
+  }
+  const stamp = daysAgo => at(daysAgo)
+  const itemsOf = async ctimes => {
+    ctx.http = {
+      ...http,
+      async get() {
+        return {
+          code: 0,
+          message: "0",
+          data: {
+            cursor: { all_count: ctimes.length },
+            replies: ctimes.map((ctime, index) => ({
+              rpid: index + 1,
+              member: { uname: `u${index}`, mid: index + 1 },
+              content: { message: "x" },
+              ctime
+            }))
+          }
+        }
+      }
+    }
+    return (await new BilibiliApi(new BilibiliApp(ctx)).fetchComments(1, 10)).items
+  }
+
+  const items = await itemsOf([at(1), at(2), at(3), at(4), at(400), Math.floor(Date.now() / 1000) - 120])
+
+  // 没有「1天前」：昨天要把时刻带上
+  assert.equal(items[0].time, "昨天 12:05")
+  assert.equal(items[1].time, "2天前")
+  assert.equal(items[2].time, "3天前")
+  // 超过三天换成「M月D日」
+  const d = new Date(stamp(4) * 1000)
+  assert.equal(items[3].time, `${d.getMonth() + 1}月${d.getDate()}日`)
+  // 跨年给完整日期，不出现「400天前」
+  assert.match(items[4].time, /^\d{4}-\d{2}-\d{2}$/)
+  // 当天按小时
+  assert.equal(items[5].time, "2分钟前")
+})
+
+test("评论参数：按时间传 mode=2、楼中楼条数可配、关掉表情就保留原文", async () => {
+  const ctx = fakeCtx()
+  const urls = []
+  const build = options => {
+    ctx.http = {
+      ...http,
+      async get(url) {
+        urls.push(url)
+        return {
+          code: 0,
+          message: "0",
+          data: {
+            cursor: { all_count: 1 },
+            replies: [
+              {
+                rpid: 1,
+                member: { uname: "甲", mid: 1 },
+                content: { message: "好耶[吃瓜]就这样", emote: { "[吃瓜]": { url: "//i0.hdslb.com/e.png" } } },
+                like: 5,
+                ctime: Math.floor(Date.now() / 1000),
+                replies: [
+                  { rpid: 11, member: { uname: "乙", mid: 2 }, content: { message: "一" } },
+                  { rpid: 12, member: { uname: "丙", mid: 3 }, content: { message: "二" } }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+    return new BilibiliApi(new BilibiliApp(ctx))
+  }
+
+  const hot = await build().fetchComments(1, 5, undefined, { sort: "hot" })
+  assert.match(urls.at(-1), /mode=3/)
+  const time = await build().fetchComments(1, 5, undefined, { sort: "time", replyLimit: 0, emote: false })
+  assert.match(urls.at(-1), /mode=2/)
+
+  // 排序不影响内容解析，这里用 time 那次的结果看条数与表情
+  assert.equal(time.items[0].replies.length, 0)
+  assert.deepEqual(time.items[0].parts, [{ text: "好耶[吃瓜]就这样" }])
+  assert.equal(hot.items[0].replies.length, 2)
+  assert.deepEqual(hot.items[0].parts, [
+    { text: "好耶" },
+    { emote: { url: "https://i0.hdslb.com/e.png" } },
+    { text: "就这样" }
+  ])
+})
+
+test("点赞门槛把评论全过滤掉时不发图", async () => {
+  const ctx = fakeCtx()
+  ctx.config.get = () => ({ ...config, commentMinLike: 999 })
+  ctx.http = {
+    ...http,
+    async get() {
+      return {
+        code: 0,
+        message: "0",
+        data: {
+          cursor: { all_count: 1 },
+          replies: [{ rpid: 1, member: { uname: "甲", mid: 1 }, content: { message: "低赞" }, like: 1, ctime: 1700000000 }]
+        }
+      }
+    }
+  }
+
+  const app = new BilibiliApp(ctx)
+  const replies = []
+  let rendered = 0
+  ctx.render = async () => {
+    rendered += 1
+    throw new Error("不该渲染")
+  }
+  const e = { async reply(content) { replies.push(content) } }
+
+  await sendComments(app, new BilibiliApi(app), e, { aid: 1, owner: { mid: 2 } })
+  assert.equal(rendered, 0)
+  assert.equal(replies.length, 0)
+})
+
+test("条数设成 0 时不请求评论，也不发评论图", async () => {
+  const ctx = fakeCtx()
+  ctx.config.get = () => ({ ...config, commentCount: 0 })
+  let requests = 0
+  ctx.http = {
+    ...http,
+    async get() {
+      requests++
+      throw new Error("不该请求评论")
+    }
+  }
+
+  const app = new BilibiliApp(ctx)
+  const api = new BilibiliApi(app)
+  const replies = []
+  const e = { async reply(content) { replies.push(content) } }
+
+  await sendComments(app, api, e, { aid: 1, owner: { mid: 2 } })
+  assert.equal(requests, 0)
+  assert.equal(replies.length, 0)
 })
 
 test("私聊解析不进群列表：`private:<uid>` 不是群号", async () => {

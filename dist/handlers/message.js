@@ -1,5 +1,6 @@
 import { cleanupFile, containsBilibiliLink, extractLinkFromSegments } from "../services/bilibili.js";
 import { deliver, react } from "./card.js";
+import { sendComments } from "./comments.js";
 /** 自动解析的中间件优先级：比默认的 100 靠里，让改写类中间件先跑 */
 const PRIORITY = 200;
 /**
@@ -109,6 +110,8 @@ async function runParse(app, api, e, target, gid) {
         await app.markParsed({ bvid: info.bvid, title: info.title, gid, group: e.group?.name });
         app.touchCooldown(gid, info.bvid);
         await react(e, "124");
+        // 第三条消息：评论区。失败不影响前面两条，内部已兜住
+        await sendComments(app, api, e, info);
     }
     if (videoFile !== undefined) {
         // 发送接口返回时文件已被平台读完，但 QQ 侧可能仍在转码；留一分钟再删更稳妥

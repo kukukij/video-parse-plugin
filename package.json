@@ -1,6 +1,6 @@
 {
   "name": "yunzai-plugin-bilibili",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "B 站视频链接解析：自动识别消息中的 B 站链接，出信息卡片、可选下载视频，带扫码登录与按群开关",
   "type": "module",
   "main": "dist/index.js",

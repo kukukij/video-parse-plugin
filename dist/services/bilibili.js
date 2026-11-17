@@ -14,11 +14,18 @@
 import { spawn } from "node:child_process";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { formatSize } from "../utils/format.js";
+import { formatDate, formatSize } from "../utils/format.js";
 /** 视频信息接口 */
 const VIEW_API = "https://api.bilibili.com/x/web-interface/view";
 /** 播放地址接口（DASH） */
 const PLAYURL_API = "https://api.bilibili.com/x/player/playurl";
+/**
+ * 评论区接口
+ *
+ * 用 `reply/main` 而不是老的 `x/v2/reply`：后者现在**一页只给 3 条**（改版之后的行为），
+ * 拿不到 10 条热评。`mode=3` 是「热门」，`next=0` 取第一页。
+ */
+const REPLY_API = "https://api.bilibili.com/x/v2/reply/main";
 /** BV 号 */
 const BV_PATTERN = /\bBV[0-9A-Za-z]{10}\b/i;
 /** AV 号 */
@@ -366,6 +373,60 @@ export class BilibiliApi {
         }
     }
     /**
+     * 拉取评论
+     *
+     * 置顶评论排在前面（B 站也这么排）。评论正文里的表情是 `[名字]` 标签，要按接口给的
+     * `emote` 表替换成图片，否则会显示成一堆方括号文字；关掉表情时直接保留原文。
+     * @param aid 视频 aid（`view` 接口直接给，不必另查）
+     * @param limit 最多几条主评论
+     * @param upMid UP 主的 mid，用来给 TA 的评论打 UP 标记
+     * @param options 排序、楼中楼条数、是否转换表情
+     * @returns 评论总数与列表；接口失败为 null
+     */
+    async fetchComments(aid, limit, upMid, options = {}) {
+        if (!Number.isFinite(limit) || limit <= 0)
+            return { total: 0, items: [] };
+        const params = new URLSearchParams({
+            type: "1",
+            oid: String(aid),
+            // 2 = 按时间（最新在前），3 = 按热度（B 站默认的「热门评论」）
+            mode: options.sort === "time" ? "2" : "3",
+            next: "0",
+            ps: String(Math.min(20, limit))
+        });
+        try {
+            const res = await this.http.get(`${REPLY_API}?${params.toString()}`, { headers: this.headers(), timeout: "15s", retry: 1 });
+            if (res.code !== 0) {
+                this.#app.log("warn", `取评论失败：code=${res.code} ${res.message}`);
+                return null;
+            }
+            // 置顶在前，再补热评；同一条可能两边都出现，按 rpid 去重
+            const raw = [...(res.data.top_replies ?? []), ...(res.data.replies ?? [])];
+            const seen = new Set();
+            const out = [];
+            for (const item of raw) {
+                const key = String(item.rpid ?? "");
+                if (key !== "") {
+                    if (seen.has(key))
+                        continue;
+                    seen.add(key);
+                }
+                out.push(toCommentView(item, upMid, {
+                    replyLimit: options.replyLimit ?? REPLY_PREVIEW,
+                    emote: options.emote !== false
+                }));
+                if (out.length >= limit)
+                    break;
+            }
+            this.#app.debug(`取到评论 ${out.length} 条，共 ${res.data.cursor?.all_count ?? 0} 条`);
+            return { total: res.data.cursor?.all_count ?? out.length, items: out };
+        }
+        catch (error) {
+            this.#app.log("warn", "取评论异常", error);
+            return null;
+        }
+    }
+    /**
      * 按配置换算要请求的画质 id
      * @param logged 是否已登录
      * @returns quality id
@@ -452,8 +513,8 @@ export class BilibiliApi {
             this.#app.log("warn", "DASH 里没有可用的视频流");
             return null;
         }
-        const videoUrl = firstUrl(video.backupUrl);
-        if (videoUrl === null)
+        const videoUrls = streamUrls(video);
+        if (videoUrls.length === 0)
             return null;
         const dir = await this.#tempDir();
         const stem = `${info.bvid}-${Date.now()}`;
@@ -465,12 +526,12 @@ export class BilibiliApi {
             // 先问一句多大：超过上限就别下了。100MB 的流白下一遍，带宽与磁盘都白花，
             // 最后还是会被同一道上限拒掉。HEAD 拿不到大小（少数 CDN 不给 content-length）
             // 时照旧下载，下载完仍有一次体积复核。
-            const declared = await this.#probeSize(videoUrl);
+            const declared = await this.#probeSize(videoUrls[0]);
             if (declared !== null && declared / 1024 / 1024 > maxMB) {
                 this.#app.log("warn", `视频 ${formatSize(declared)} 超过上限 ${maxMB}MB，未下载`);
                 return null;
             }
-            const videoBytes = await this.#download(videoUrl, videoPart);
+            const videoBytes = await this.#downloadAny(videoUrls, videoPart);
             if (videoBytes === null) {
                 // 失败时可能已经写了一半，留着只会在临时目录里越攒越多
                 await rm(videoPart, { force: true });
@@ -481,12 +542,16 @@ export class BilibiliApi {
                 await rm(videoPart, { force: true });
                 return null;
             }
-            const audioUrl = audio === undefined ? null : firstUrl(audio.backupUrl);
-            const hasAudio = audioUrl === null ? false : (await this.#download(audioUrl, audioPart)) !== null;
+            const audioUrls = audio === undefined ? [] : streamUrls(audio);
+            const hasAudio = audioUrls.length === 0 ? false : (await this.#downloadAny(audioUrls, audioPart)) !== null;
             if (!hasAudio)
                 await rm(audioPart, { force: true });
             if (!hasAudio) {
-                this.#app.log("warn", "没有可用的音频流，将只发送视频轨");
+                // 「本来就没有音轨」和「音轨下载失败」是两回事，前者不该报警
+                if (audio === undefined)
+                    this.#app.debug("该视频没有音轨，直接发送画面");
+                else
+                    this.#app.log("warn", "音频流下载失败，将只发送画面");
                 await rename(videoPart, partialOutput);
                 await rename(partialOutput, output);
                 return output;
@@ -520,6 +585,26 @@ export class BilibiliApi {
             await rm(audioPart, { force: true });
             return null;
         }
+    }
+    /**
+     * 依次尝试多个地址下载同一路流
+     *
+     * B 站会把同一路流挂在多个节点上，其中个别节点会连上就断（P2P 类节点尤其常见）。
+     * 一个不行就换下一个，全都不行才算失败 —— 失败时把已经写了一半的文件删掉。
+     * @param urls 候选地址，按优先级排好
+     * @param dest 目标路径
+     * @returns 字节数；全部失败为 null
+     */
+    async #downloadAny(urls, dest) {
+        for (let index = 0; index < urls.length; index += 1) {
+            const bytes = await this.#download(urls[index], dest);
+            if (bytes !== null)
+                return bytes;
+            await rm(dest, { force: true });
+            if (index < urls.length - 1)
+                this.#app.debug(`第 ${index + 1} 个地址不可用，换下一个重试`);
+        }
+        return null;
     }
     /**
      * 用 HEAD 预检流的大小
@@ -565,7 +650,7 @@ export class BilibiliApi {
             return size > 0 ? size : null;
         }
         catch (error) {
-            this.#app.debug("流下载失败", error);
+            this.#app.debug(`流下载失败（${hostOf(url)}）`, error);
             return null;
         }
     }
@@ -689,17 +774,225 @@ export function buildMergeArgs(video, audio, output) {
         output
     ];
 }
+/** 每条主评论下最多带几条楼中楼 */
+const REPLY_PREVIEW = 2;
+/**
+ * 把接口返回的一条评论转成可渲染的形状
+ * @param raw 原始评论
+ * @param upMid UP 主 mid，用于打 UP 标记
+ * @returns 评论视图
+ */
+function toCommentView(raw, upMid, options) {
+    const partsOf = (item) => {
+        const message = item.content?.message ?? "";
+        return options.emote ? splitCommentParts(message, item.content?.emote) : message === "" ? [] : [{ text: message }];
+    };
+    const reply = (item) => ({
+        uname: item.member?.uname ?? "",
+        avatar: normalizeUrl(item.member?.avatar ?? ""),
+        parts: partsOf(item),
+        like: item.like ?? 0,
+        time: timeText(item),
+        level: levelOf(item),
+        location: locationOf(item),
+        isUp: upMid !== undefined && String(item.member?.mid ?? "") === String(upMid),
+        isVip: isVipOf(item)
+    });
+    return {
+        uname: raw.member?.uname ?? "",
+        avatar: normalizeUrl(raw.member?.avatar ?? ""),
+        parts: partsOf(raw),
+        // 配图：接口给的是 http 直链，统一换成 https，免得渲染时被当成混合内容拦掉
+        pictures: (raw.content?.pictures ?? [])
+            .map(pic => ({ url: normalizeUrl(pic.img_src ?? ""), width: pic.img_width ?? 0, height: pic.img_height ?? 0 }))
+            .filter(pic => pic.url !== ""),
+        like: raw.like ?? 0,
+        time: timeText(raw),
+        level: levelOf(raw),
+        location: locationOf(raw),
+        isVip: isVipOf(raw),
+        isUp: upMid !== undefined && String(raw.member?.mid ?? "") === String(upMid),
+        replies: (raw.replies ?? []).slice(0, Math.max(0, options.replyLimit)).map(reply)
+    };
+}
+/**
+ * 把评论正文切成「文字 / 表情图」两种段
+ *
+ * 接口给的是 `[吃瓜]` 这样的标签加一张 `emote` 表；不替换的话，图片区的评论会变成一堆
+ * 方括号文字，和 B 站原样差得远。长标签优先匹配，避免 `[大笑]` 被 `[大]` 抢先切走。
+ * @param message 正文
+ * @param emote 标签 → 表情图
+ * @returns 分段
+ */
+function splitCommentParts(message, emote) {
+    const parts = [];
+    if (message === "")
+        return parts;
+    const table = emote ?? {};
+    const keys = Object.keys(table)
+        .filter(key => key !== "" && (table[key]?.url ?? "") !== "")
+        .sort((a, b) => b.length - a.length);
+    let buffer = "";
+    let index = 0;
+    while (index < message.length) {
+        const hit = keys.find(key => message.startsWith(key, index));
+        if (hit === undefined) {
+            buffer += message[index];
+            index += 1;
+            continue;
+        }
+        if (buffer !== "") {
+            parts.push({ text: buffer });
+            buffer = "";
+        }
+        parts.push({ emote: { url: normalizeUrl(table[hit]?.url ?? "") } });
+        index += hit.length;
+    }
+    if (buffer !== "")
+        parts.push({ text: buffer });
+    return parts;
+}
+/**
+ * 把 B 站图床地址补成 https 绝对地址
+ *
+ * 接口里有三种形态：`http://`、`//`、以及完整 https。前两种在渲染时容易被当成混合
+ * 内容或相对路径。
+ * @param url 原地址
+ * @returns 规范化后的地址；空串原样返回
+ */
+function normalizeUrl(url) {
+    const text = url.trim();
+    if (text === "")
+        return "";
+    if (text.startsWith("//"))
+        return `https:${text}`;
+    if (text.startsWith("http://"))
+        return `https://${text.slice("http://".length)}`;
+    return text;
+}
+/**
+ * 评论的展示时间
+ *
+ * 不直接用 `time_desc`（接口会给「2178天前发布」）。规则按日历天算：
+ * 当天 → 刚刚 / N分钟前 / N小时前；昨天 → `昨天 HH:mm`；前天到三天前 → `N天前`；
+ * 再早的直接给日期。
+ *
+ * 用日历天而不是「除以 86400」：晚上 23 点看前天 23 点的评论，按小时算才 38 小时，
+ * 会被误判成「昨天」；按日历就是实打实的前天。
+ * @param raw 原始评论
+ * @returns 时间文案
+ */
+function timeText(raw) {
+    const ctime = raw.ctime;
+    if (ctime === undefined || ctime <= 0) {
+        const desc = raw.reply_control?.time_desc;
+        return typeof desc === "string" ? desc.replace(/发布$/, "") : "";
+    }
+    const then = new Date(ctime * 1000);
+    const now = new Date();
+    const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const dayDiff = Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000);
+    if (dayDiff <= 0) {
+        const seconds = Math.max(0, Math.floor(now.getTime() / 1000) - ctime);
+        if (seconds < 60)
+            return "刚刚";
+        if (seconds < 3600)
+            return `${Math.floor(seconds / 60)}分钟前`;
+        return `${Math.floor(seconds / 3600)}小时前`;
+    }
+    // 昨天带时刻：B 站没有「1天前」这种说法
+    if (dayDiff === 1) {
+        const hh = String(then.getHours()).padStart(2, "0");
+        const mm = String(then.getMinutes()).padStart(2, "0");
+        return `昨天 ${hh}:${mm}`;
+    }
+    // 「N天前」最多到三天，再早给日期
+    if (dayDiff <= 3)
+        return `${dayDiff}天前`;
+    if (then.getFullYear() === now.getFullYear()) {
+        return `${then.getMonth() + 1}月${then.getDate()}日`;
+    }
+    return formatDate(ctime);
+}
+/**
+ * 评论作者的等级
+ *
+ * 0 是真实存在的等级（没答过题的新号），不能拿它兼作「未知」；接口没给时返回 -1，
+ * 模板据此跳过徽章。
+ * @param raw 原始评论
+ * @returns 0-6；未知为 -1
+ */
+function levelOf(raw) {
+    const level = raw.member?.level_info?.current_level;
+    return typeof level === "number" && level >= 0 && level <= 6 ? level : -1;
+}
+/**
+ * 评论作者是不是大会员
+ *
+ * `vipType` 只表示「有没有开通过」（1 大会员 / 2 年度），过期的也会带着；真正有效
+ * 要看 `vipStatus === 1`，否则过期用户的昵称也会一路挂粉色。
+ * @param raw 原始评论
+ * @returns 是否处于大会员有效期
+ */
+function isVipOf(raw) {
+    const vip = raw.member?.vip;
+    return vip?.vipStatus === 1 && (vip.vipType ?? 0) > 0;
+}
+/**
+ * 评论的 IP 属地
+ *
+ * 接口给的是「IP属地：广东」，只留省份；未登录请求时接口完全不返回这个字段，
+ * 此时退回空串，模板会跳过这一项。
+ * @param raw 原始评论
+ * @returns 省份名；没有为空串
+ */
+function locationOf(raw) {
+    const rawLocation = raw.reply_control?.location;
+    if (typeof rawLocation !== "string")
+        return "";
+    return rawLocation.replace(/^IP属地[:：]\s*/, "").trim();
+}
 /**
  * 取流地址
  * @param backup `backupUrl` 字段，可能是字符串或数组
  * @returns 首个地址；没有则 null
  */
-function firstUrl(backup) {
-    if (typeof backup === "string")
-        return backup === "" ? null : backup;
-    if (Array.isArray(backup))
-        return backup.find(item => item !== "") ?? null;
-    return null;
+/**
+ * 取地址里的主机名，只用于日志
+ * @param url 地址
+ * @returns 主机名；解析失败给原串前缀
+ */
+function hostOf(url) {
+    try {
+        return new URL(url).host;
+    }
+    catch {
+        return url.slice(0, 40);
+    }
+}
+/**
+ * 把一路流的候选地址按优先级排好
+ *
+ * `baseUrl` 是主地址，`backupUrl` 是 CDN 给的备选（1-3 个，分散在不同节点）。**不能只用
+ * backupUrl**：某些视频的备选里有一台 P2P 节点（`solseed.cn` 之类）连上就被对端掐断，
+ * 而主地址是完全正常的，只用备选会整个下载失败。
+ * @param stream 带地址的流
+ * @returns 去重后的地址列表，主地址在前
+ */
+export function streamUrls(stream) {
+    const backup = Array.isArray(stream.backupUrl)
+        ? stream.backupUrl
+        : stream.backupUrl === undefined
+            ? []
+            : [stream.backupUrl];
+    const urls = [];
+    for (const item of [stream.baseUrl, ...backup]) {
+        if (typeof item !== "string" || item === "")
+            continue;
+        if (!urls.includes(item))
+            urls.push(item);
+    }
+    return urls;
 }
 /**
  * 删除一个临时文件，失败只记日志

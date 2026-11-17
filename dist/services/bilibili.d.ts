@@ -1,11 +1,13 @@
 import type { HttpClient, Segment } from "@yunzai-ng/types";
 import type { BilibiliApp } from "../core/app.js";
-import type { BilibiliVideoInfo } from "../types.js";
+import type { BilibiliVideoInfo, CommentView } from "../types.js";
 /** DASH 中的一路视频流 */
 interface DashVideo {
     /** 画质 id */
     id: number;
-    /** 主地址的主机可能限速，备用地址常能救回来 */
+    /** 主地址（mcdn / upos 等），通常是最稳的那条 */
+    baseUrl?: string;
+    /** 备用地址，可能 1-3 个，分散在不同 CDN 节点 */
     backupUrl?: string | string[];
     /** 码率 */
     bandwidth?: number;
@@ -146,6 +148,25 @@ export declare class BilibiliApi {
         cid: number;
     }): Promise<DashPayload | null>;
     /**
+     * 拉取评论
+     *
+     * 置顶评论排在前面（B 站也这么排）。评论正文里的表情是 `[名字]` 标签，要按接口给的
+     * `emote` 表替换成图片，否则会显示成一堆方括号文字；关掉表情时直接保留原文。
+     * @param aid 视频 aid（`view` 接口直接给，不必另查）
+     * @param limit 最多几条主评论
+     * @param upMid UP 主的 mid，用来给 TA 的评论打 UP 标记
+     * @param options 排序、楼中楼条数、是否转换表情
+     * @returns 评论总数与列表；接口失败为 null
+     */
+    fetchComments(aid: number, limit: number, upMid?: number, options?: {
+        sort?: "hot" | "time";
+        replyLimit?: number;
+        emote?: boolean;
+    }): Promise<{
+        total: number;
+        items: CommentView[];
+    } | null>;
+    /**
      * 从 DASH 里挑出最合适的一路视频与一路音频
      *
      * 指定画质时向下回退而不是向上：使用者填 720P 通常是嫌文件大，给他一路 1080P
@@ -199,6 +220,19 @@ export declare class BilibiliApi {
  * @returns ffmpeg 参数数组
  */
 export declare function buildMergeArgs(video: string, audio: string, output: string): string[];
+/**
+ * 把一路流的候选地址按优先级排好
+ *
+ * `baseUrl` 是主地址，`backupUrl` 是 CDN 给的备选（1-3 个，分散在不同节点）。**不能只用
+ * backupUrl**：某些视频的备选里有一台 P2P 节点（`solseed.cn` 之类）连上就被对端掐断，
+ * 而主地址是完全正常的，只用备选会整个下载失败。
+ * @param stream 带地址的流
+ * @returns 去重后的地址列表，主地址在前
+ */
+export declare function streamUrls(stream: {
+    baseUrl?: string;
+    backupUrl?: string | string[];
+}): string[];
 /**
  * 删除一个临时文件，失败只记日志
  * @param app 运行期状态

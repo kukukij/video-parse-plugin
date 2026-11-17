@@ -168,3 +168,74 @@ export interface BilibiliUserInfo {
   /** 硬币数 */
   money?: number
 }
+
+/* ─────────────────────────────── 评论 ─────────────────────────────── */
+
+/** 评论正文里的一段：文字，或一个表情图 */
+export interface CommentPart {
+  /** 文字内容 */
+  text?: string
+  /** 表情图；与 text 二者必有其一 */
+  emote?: {
+    /** 图片地址 */
+    url: string
+  }
+}
+
+/** 评论里的配图 */
+export interface CommentPicture {
+  /** 地址 */
+  url: string
+  /** 宽 */
+  width: number
+  /** 高 */
+  height: number
+}
+
+/** 一条楼中楼回复 */
+export interface CommentReplyView {
+  /** 用户名 */
+  uname: string
+  /** 头像 */
+  avatar: string
+  /** 正文（文字与表情分段） */
+  parts: CommentPart[]
+  /** 点赞数 */
+  like: number
+  /** 展示用的时间文案 */
+  time: string
+  /** 等级 0-6，用来画 LV 徽章 */
+  level: number
+  /** IP 属地（省/地区名，已去掉「IP属地：」前缀）；关闭公开时为空 */
+  location: string
+  /** 是否是 UP 主本人（UP 回复别人时也要带标记） */
+  isUp: boolean
+  /** 是否大会员：决定昵称颜色与头像右下角的小「大」标 */
+  isVip: boolean
+}
+
+/** 渲染评论图片用的一条主评论 */
+export interface CommentView {
+  /** 用户名 */
+  uname: string
+  /** 头像 */
+  avatar: string
+  /** 正文（文字与表情分段） */
+  parts: CommentPart[]
+  /** 配图 */
+  pictures: CommentPicture[]
+  /** 点赞数 */
+  like: number
+  /** 展示用的时间文案 */
+  time: string
+  /** 是否是 UP 主本人 */
+  isUp: boolean
+  /** 等级 0-6，用来画 LV 徽章 */
+  level: number
+  /** IP 属地（省/地区名，已去掉「IP属地：」前缀）；关闭公开时为空 */
+  location: string
+  /** 是否大会员：决定昵称颜色与头像右下角的小「大」标 */
+  isVip: boolean
+  /** 楼中楼，已按上限截好 */
+  replies: CommentReplyView[]
+}
