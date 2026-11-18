@@ -12,6 +12,8 @@
  *             要用 `play_addr.uri`（vid）去 `/aweme/v1/play/` 换一条干净流；
  *          4) 评论要 `a_bogus` 签名，签名参数与请求 UA 绑死，两处必须一致。
  */
+import { once } from "node:events";
+import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { formatSize } from "../utils/format.js";
@@ -364,18 +366,40 @@ export class DouyinApi {
         await mkdir(dir, { recursive: true });
         const part = join(dir, `${stem}.mp4.part`);
         const output = join(dir, `${stem}.mp4`);
+        const limit = maxMB * 1024 * 1024;
+        // 抖音 CDN 会主动断掉框架 undici 连接池里复用的空闲连接，走 ctx.http.download 会拿到
+        // SocketError: other side closed。这里用 fetch 自己建连接、边下边写盘，顺便按体积上限提前中断
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout === "2m" ? 120_000 : 600_000);
         try {
-            const file = await this.#app.ctx.http.download(url, part, {
+            const res = await fetch(url, {
                 headers: { "User-Agent": MOBILE_UA, Referer: referer },
-                timeout
+                signal: controller.signal
             });
-            const size = (await stat(file)).size;
-            if (size === 0) {
-                await rm(part, { force: true });
-                return null;
+            if (!res.ok || res.body === null)
+                throw new Error(`HTTP ${res.status}`);
+            const stream = createWriteStream(part);
+            const finished = new Promise((resolve, reject) => {
+                stream.on("finish", () => resolve());
+                stream.on("error", reject);
+            });
+            let written = 0;
+            for await (const chunk of res.body) {
+                written += chunk.byteLength;
+                if (written > limit) {
+                    stream.destroy();
+                    await finished.catch(() => undefined);
+                    await rm(part, { force: true });
+                    this.#app.log("warn", `抖音视频超过上限 ${maxMB}MB，已放弃`);
+                    return null;
+                }
+                if (!stream.write(chunk))
+                    await once(stream, "drain");
             }
-            if (size / 1024 / 1024 > maxMB) {
-                this.#app.log("warn", `抖音视频 ${formatSize(size)} 超过上限 ${maxMB}MB，已放弃`);
+            stream.end();
+            await finished;
+            const size = (await stat(part)).size;
+            if (size === 0) {
                 await rm(part, { force: true });
                 return null;
             }
@@ -386,6 +410,9 @@ export class DouyinApi {
             this.#app.log("warn", "抖音视频下载失败", error);
             await rm(part, { force: true });
             return null;
+        }
+        finally {
+            clearTimeout(timer);
         }
     }
     /**
@@ -469,8 +496,16 @@ export class DouyinApi {
      * 给评论补上楼中楼
      *
      * 主列表里内嵌的回复通常只有 0-1 条，够不上「每条带 2 条」；有更多回复时单独请求
-     * 楼中楼接口补上。该接口对非登录请求常返回空体，失败一次后 10 分钟内不再尝试 ——
-     * 否则每条评论都要白等一次超时。
+     * 楼中楼接口补上。
+     *
+     * 两个坑：
+     * 1) 接口只对登录态开放，只有 ttwid 的匿名请求固定返回 200 + 空体，故没配登录
+     *    Cookie 时直接跳过，不去白等；
+     * 2) 这个路径对 `a_bogus` 的校验与评论列表不同 —— `abogus` 生成的完整签名会被判成
+     *    无效并返回空体，反而短值能通（实测 2026-11）。这里固定传短值，接口改回严格
+     *    校验时只是拿不到楼中楼，自动退回内嵌回复。
+     *
+     * 失败一次后 10 分钟内不再尝试，否则每条评论都要白等一次超时。
      * @param awemeId 作品 id
      * @param views 已映射好的评论（就地补 `replies`）
      * @param emoji 表情表
@@ -480,13 +515,16 @@ export class DouyinApi {
     async #fillReplies(awemeId, views, emoji, authorSecUid, replyLimit, showPictures) {
         if (Date.now() - this.#repliesBlockedAt < REPLY_BLOCK_TTL)
             return;
+        // 没登录（只有 ttwid）时接口固定返回空体，跳过以免白等
+        const user = this.#userCookie();
+        if (!/(^|;\s*)sessionid=/.test(user)) {
+            this.#app.debug("抖音未配置登录 Cookie，跳过楼中楼");
+            return;
+        }
         const targets = views
             .filter(entry => entry.view.replyTotal > entry.view.replies.length)
             .slice(0, 6);
         if (targets.length === 0)
-            return;
-        const signer = await loadSigner();
-        if (signer === null)
             return;
         const ttwid = await this.#ensureTtwid();
         const cookie = this.#cookieHeader(ttwid);
@@ -507,8 +545,7 @@ export class DouyinApi {
                     ...BASE_PARAMS
                 });
                 const query = params.toString();
-                const signature = await signer(query, PC_UA);
-                const res = await this.#app.ctx.http.request(`${REPLY_API}?${query}&a_bogus=${encodeURIComponent(signature)}`, {
+                const res = await this.#app.ctx.http.request(`${REPLY_API}?${query}&a_bogus=1`, {
                     method: "GET",
                     headers: {
                         "User-Agent": PC_UA,
