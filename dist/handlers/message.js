@@ -15,7 +15,7 @@ export function registerAutoParse(app, api) {
     return app.ctx.middleware(async (e, next) => {
         if (e.kind !== "message")
             return next();
-        if (!app.config.enabled)
+        if (app.config.biliEnabled === false)
             return next();
         if (!shouldConsider(app, e))
             return next();

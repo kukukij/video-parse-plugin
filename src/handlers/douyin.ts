@@ -33,7 +33,6 @@ export function registerDouyin(app: BilibiliApp): () => void {
   return app.ctx.middleware(
     async (e, next) => {
       if (e.kind !== "message") return next()
-      if (!app.config.enabled) return next()
       if (app.config.douyinEnabled !== true) return next()
       if (!shouldConsider(app, e)) return next()
       if (!DouyinApi.hasLink(e.text)) return next()

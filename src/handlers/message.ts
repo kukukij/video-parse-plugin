@@ -32,7 +32,7 @@ export function registerAutoParse(app: BilibiliApp, api: BilibiliApi): Disposer 
   return app.ctx.middleware(
     async (e, next) => {
       if (e.kind !== "message") return next()
-      if (!app.config.enabled) return next()
+      if (app.config.biliEnabled === false) return next()
       if (!shouldConsider(app, e)) return next()
 
       try {

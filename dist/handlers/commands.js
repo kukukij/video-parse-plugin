@@ -170,7 +170,7 @@ async function statusText(app, e) {
     const snapshot = app.snapshot();
     const lines = [
         "【视频解析】",
-        `开关：${config.enabled ? "开" : "关"} · 视频：${videoLabel(config.videoMode)}`,
+        `哔哩哔哩：${config.biliEnabled === false ? "关" : "开"}（${videoLabel(config.videoMode)}） · 抖音：${config.douyinEnabled === true ? "开" : "关"}`,
         `渲染卡片：${config.renderCard ? "开" : "关"} · 合并转发：${config.cardAsForward ? "开（卡片/视频/评论图）" : "关"}`,
         `登录：${app.isLoggedIn() ? `${snapshot.login.uname ?? "已登录"}（${snapshot.login.mid ?? "?"}）` : "未登录"}`,
         `抖音 Cookie：${String(config.douyinCookie ?? "").trim() === "" ? "未填写（匿名解析）" : "已填写（楼中楼可用）"}`,

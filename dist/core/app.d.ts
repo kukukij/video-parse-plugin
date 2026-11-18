@@ -78,7 +78,7 @@ export interface StatusSnapshot {
     whitelistActive: boolean;
     /** 关键配置的只读投影 */
     config: {
-        enabled: boolean;
+        biliEnabled: boolean;
         /** 视频下载档位：画质与体积上限已合并成一项 */
         videoMode: string;
         renderCard: boolean;

@@ -3,7 +3,7 @@
 ## 快速开始
 
 1. 装好插件并构建（见 [README](README.md)）。
-2. 确认 `enabled` 为开、机器人账号在目标群里。
+2. 确认哔哩哔哩、抖音两个解析开关都为开，机器人账号在目标群里。
 3. 群里直接贴链接即可，不用任何命令。
 
 ## 运行依赖
@@ -80,9 +80,9 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 
 ## 合并转发规则
 
-由 `cardAsForward`（总开关）和 `douyinImagesAsForward`（图片合并，仅抖音）两个开关决定：
+由 `cardAsForward`（合并转发总开关）和 `douyinImagesAsForward`（图片合并，仅抖音）两个开关决定：
 
-| 总开关 | 图片合并 | 效果 |
+| 合并转发 | 图片合并 | 效果 |
 | --- | --- | --- |
 | 开 | 开 | 一条总转发：**卡片 → 图文转发（图片/视频，一条消息一张）→ 评论图**；哔哩哔哩是 卡片 → 视频 → 评论图 |
 | 开 | 关 | 一条总转发：卡片 → 视频 → 评论图；抖音图片另发一条多图消息 |
@@ -91,7 +91,7 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 
 说明：
 
-- 图片合并开关独立生效，不依赖总开关。
+- 图片合并开关独立生效，不依赖合并转发。
 - 抖音两个都开时，图文转发只嵌套一层，不会出现「转发里再套空转发」。
 - 平台不接受嵌套结构时自动退回平铺，仍是一条总转发。
 - 合并转发超时（账号接口超时偏短）时按已送达处理，不会再补发一条。
@@ -138,12 +138,8 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled` | `true` | 总开关，关掉后不解析任何链接（两个平台都停） |
-| `parseInPrivate` | `false` | 私聊也解析 |
-| `ignorePrefixes` | `["#", "/", "！"]` | 以此开头的消息不自动解析 |
-| `renderCard` | `true` | 渲染卡片图片；失败回落为封面 + 文字 |
+| `biliEnabled` | `true` | 哔哩哔哩解析开关；关掉后不响应 B 站链接（不影响抖音） |
 | `videoMode` | `off` | `off` / `auto`(≤250MB) / `480p`(≤50MB) / `720p`(≤120MB) / `1080p`(≤250MB) / `1080p60`(≤400MB) / `4k`(≤800MB) |
-| `parseCacheTTL` | `300` | 同群同作品冷却秒数，`0` = 不去重 |
 | `liveRecord` | `10` | 直播录制秒数（0–60），`0` = 只发卡片 |
 
 ### 抖音
@@ -152,12 +148,12 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | --- | --- | --- |
 | `douyinEnabled` | `true` | 是否解析抖音链接 |
 | `douyinVideo` | `off` | `off` / `540p`(≤100MB) / `720p`(≤200MB) / `1080p`(≤400MB) |
-| `douyinImagesAsForward` | `true` | 图文图片合并转发（一条消息一张）；总开关也开时做成总转发里的图文转发 |
+| `douyinImagesAsForward` | `true` | 图文图片合并转发（一条消息一张）；合并转发也开时做成总转发里的图文转发 |
 | `douyinNoteVideo` | `false` | 动图作品用 Cookie 取原视频一起发，约 1–2 秒；失败仍发静态图 |
 | `douyinLiveRecord` | `10` | 直播录制秒数（0–60），`0` = 只发卡片 |
 | `douyinCookie` | 空 | 抖音 Cookie，可选；不填也能解析，填了才能出楼中楼、取动图原视频 |
 
-### 评论图
+### 评论
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -167,25 +163,29 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | `commentMinLike` | `0` | 低于该点赞数的评论不显示，`0` = 不过滤 |
 | `commentShowLocation` | `true` | 显示 IP 属地 |
 | `commentShowEmote` | `true` | 显示表情；关掉显示文字标签 |
-| `commentSort` | `hot` | 排序：`hot` 热度 / `time` 时间（仅 B 站） |
-| `commentShowLevel` | `true` | 昵称后的 LV 徽章（仅 B 站） |
+| `commentSort` | `hot` | 排序：`hot` 热度 / `time` 时间（仅哔哩哔哩） |
+| `commentShowLevel` | `true` | 昵称后的 LV 徽章（仅哔哩哔哩） |
 | `commentShowPictures` | `true` | 显示配图与表情包，最多 3 张 |
 
-### 通用
+### 设置
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `cardAsForward` | `true` | 合并转发总开关；关掉逐条直发 |
-| `atSender` | `false` | 解析后 @ 发送者，仅直发生效 |
 | `groupWhitelist` | `[]` | 群白名单，留空 = 全部群 |
 | `groupBlacklist` | `[]` | 群黑名单，优先于白名单 |
+| `parseInPrivate` | `false` | 私聊也解析 |
+| `ignorePrefixes` | `["#", "/", "！"]` | 以此开头的消息不自动解析 |
+| `cardAsForward` | `true` | 合并转发总开关；关掉逐条直发 |
+| `renderCard` | `true` | 渲染卡片图片；失败回落为封面 + 文字 |
+| `parseCacheTTL` | `300` | 同群同作品冷却秒数，`0` = 不去重 |
+| `atSender` | `false` | 解析后 @ 发送者，仅直发生效 |
 | `debug` | `false` | 输出解析细节到日志 |
 
 ## 故障排查
 
 | 现象 | 排查 |
 | --- | --- |
-| 贴链接没反应 | 总开关 / 抖音开关是否打开；群是否在黑名单；消息是否以 `#` 等前缀开头；是否还在冷却时间内；私聊是否允许 |
+| 贴链接没反应 | 对应平台的解析开关是否打开（哔哩哔哩 / 抖音）；群是否在黑名单；消息是否以 `#` 等前缀开头；是否还在冷却时间内；私聊是否允许 |
 | 卡片变成封面 + 文字 | 没装渲染器或渲染失败，看日志里的渲染错误 |
 | 群里出现两条不同形态的消息 | 账号「接口调用超时」太短，转发其实已发出又被判失败。把面板 → 账号 → napcat → 传输 → 接口调用超时调到 60 秒 |
 | 动图没有视频 | 需要 `douyinNoteVideo` 打开且填了 `douyinCookie` |

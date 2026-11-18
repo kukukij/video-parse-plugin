@@ -27,8 +27,6 @@ export function registerDouyin(app) {
     return app.ctx.middleware(async (e, next) => {
         if (e.kind !== "message")
             return next();
-        if (!app.config.enabled)
-            return next();
         if (app.config.douyinEnabled !== true)
             return next();
         if (!shouldConsider(app, e))

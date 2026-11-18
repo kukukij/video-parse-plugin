@@ -152,8 +152,6 @@ export class BilibiliApp {
      * @returns 是否启用
      */
     isGroupEnabled(gid) {
-        if (!this.config.enabled)
-            return false;
         if (this.isGroupBlocked(gid))
             return false;
         const whitelist = this.config.groupWhitelist ?? [];
@@ -281,7 +279,7 @@ export class BilibiliApp {
             // 白名单非空 = 只解析名单内的群，面板要据此说明当前的模式
             whitelistActive: whitelist.length > 0,
             config: {
-                enabled: cfg.enabled,
+                biliEnabled: cfg.biliEnabled !== false,
                 videoMode: cfg.videoMode,
                 renderCard: cfg.renderCard,
                 cardAsForward: cfg.cardAsForward,

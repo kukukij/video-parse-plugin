@@ -1,10 +1,6 @@
 declare const _default: import("@yunzai-ng/types").PluginDefinition<{
-    enabled: boolean;
-    parseInPrivate: boolean;
-    ignorePrefixes: string[];
-    renderCard: boolean;
+    biliEnabled: boolean;
     videoMode: "off" | "auto" | "480p" | "720p" | "1080p" | "1080p60" | "4k";
-    parseCacheTTL: number;
     liveRecord: number;
     douyinEnabled: boolean;
     douyinVideo: "off" | "720p" | "1080p" | "540p";
@@ -21,10 +17,14 @@ declare const _default: import("@yunzai-ng/types").PluginDefinition<{
     commentSort: "hot" | "time";
     commentShowLevel: boolean;
     commentShowPictures: boolean;
-    cardAsForward: boolean;
-    atSender: boolean;
     groupWhitelist: string[];
     groupBlacklist: string[];
+    parseInPrivate: boolean;
+    ignorePrefixes: string[];
+    cardAsForward: boolean;
+    renderCard: boolean;
+    parseCacheTTL: number;
+    atSender: boolean;
     debug: boolean;
 }>;
 export default _default;

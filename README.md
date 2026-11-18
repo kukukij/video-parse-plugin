@@ -84,7 +84,7 @@ Windows 手动安装的话，把解压后的 `bin` 目录加进系统 `PATH`。�
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled` | `true` | 总开关，关掉后不解析任何链接 |
+| `biliEnabled` | `true` | 哔哩哔哩解析开关，关掉后不响应 B 站链接 |
 | `renderCard` | `true` | 渲染卡片图片，失败回落封面 + 文字 |
 | `videoMode` | `off` | 哔哩哔哩视频下载档位（画质 + 体积上限） |
 | `douyinEnabled` | `true` | 是否解析抖音链接 |

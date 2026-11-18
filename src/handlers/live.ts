@@ -216,8 +216,10 @@ export async function deliverLive(
     }
   }
 
+  // @ 只在直发时贴：和作品卡片一致，转发节点里 @ 不出来
+  const at = app.config.atSender ? [seg.at(e.sender.uid), seg.text(" ")] : []
   try {
-    await e.reply(infoSegments)
+    await e.reply([...at, ...infoSegments])
   } catch (error) {
     app.log("error", "直播卡片发送失败", error)
     return false

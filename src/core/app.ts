@@ -100,7 +100,7 @@ export interface StatusSnapshot {
   whitelistActive: boolean
   /** 关键配置的只读投影 */
   config: {
-    enabled: boolean
+    biliEnabled: boolean
     /** 视频下载档位：画质与体积上限已合并成一项 */
     videoMode: string
     renderCard: boolean
@@ -279,7 +279,6 @@ export class BilibiliApp {
    * @returns 是否启用
    */
   isGroupEnabled(gid: string): boolean {
-    if (!this.config.enabled) return false
     if (this.isGroupBlocked(gid)) return false
     const whitelist = this.config.groupWhitelist ?? []
     return whitelist.length === 0 || whitelist.includes(gid)
@@ -408,7 +407,7 @@ export class BilibiliApp {
       // 白名单非空 = 只解析名单内的群，面板要据此说明当前的模式
       whitelistActive: whitelist.length > 0,
       config: {
-        enabled: cfg.enabled,
+        biliEnabled: cfg.biliEnabled !== false,
         videoMode: cfg.videoMode,
         renderCard: cfg.renderCard,
         cardAsForward: cfg.cardAsForward,

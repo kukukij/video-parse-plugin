@@ -30,6 +30,7 @@ const { sendComments } = await load("handlers/comments.js")
 const { DouyinApi, noteVideoOf, parseLiveInfo, parseNoteVideo, resetAcCache } = await load("services/douyin.js")
 const { extractChallengeScript, solveAcChallenge } = await load("services/douyin-ac.js")
 const { deliver: deliverDouyin } = await load("handlers/douyin.js")
+const { deliverLive } = await load("handlers/live.js")
 const { resolveVideo, resolveDouyinVideo, videoLabel } = await load("utils/video.js")
 const { encryptString, decryptString } = await load("utils/crypto.js")
 const { formatCount, formatDuration } = await load("utils/format.js")
@@ -74,7 +75,7 @@ const http = {
 
 /** 默认配置 */
 const config = {
-  enabled: true,
+  biliEnabled: true,
   parseInPrivate: false,
   ignorePrefixes: ["#"],
   // 画质与体积上限已合并成档位
@@ -443,6 +444,40 @@ test("抖音视频作品：开总开关时卡片与视频在同一条转发", as
     sent[0].nodes.map(node => node.message[0].type),
     ["image", "video"]
   )
+})
+
+test("直播直发：@ 开关打开时贴发送者，关闭时不贴", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+  const info = {
+    living: true,
+    title: "测试直播",
+    anchor: "主播",
+    cover: "https://i0.hdslb.com/cover.jpg",
+    area: "",
+    popularity: 0,
+    watched: 0,
+    likes: 0,
+    attention: 0,
+    guards: 0,
+    roomId: "42",
+    anchorFace: "",
+    liveTime: ""
+  }
+
+  config.atSender = true
+  try {
+    const { e, sent } = fakeEvent({ forward: true })
+    await deliverLive(app, e, info, "bilibili", undefined, "")
+    // 没有录制片段时直发：@ + 空格，然后是封面与文字
+    assert.deepEqual(sent[0].map(segment => segment?.type).slice(0, 4), ["at", "text", "image", "text"])
+  } finally {
+    config.atSender = false
+  }
+
+  const { e, sent } = fakeEvent({ forward: true })
+  await deliverLive(app, e, info, "bilibili", undefined, "")
+  assert.equal(sent[0][0]?.type, "image")
 })
 
 test("抖音关总开关：图片和视频仍单独合并转发，卡片直发", async () => {

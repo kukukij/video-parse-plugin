@@ -189,8 +189,10 @@ export async function deliverLive(app, e, info, platform, videoFile, shareUrl = 
             app.log("warn", "直播合并转发发送失败，改为直接发送", error);
         }
     }
+    // @ 只在直发时贴：和作品卡片一致，转发节点里 @ 不出来
+    const at = app.config.atSender ? [seg.at(e.sender.uid), seg.text(" ")] : [];
     try {
-        await e.reply(infoSegments);
+        await e.reply([...at, ...infoSegments]);
     }
     catch (error) {
         app.log("error", "直播卡片发送失败", error);

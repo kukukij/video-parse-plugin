@@ -400,7 +400,7 @@
             </svg>
           </div>
           <div class="sec-text">
-            <h2>抖音</h2>
+            <h2>抖音账号</h2>
             <p class="sec-desc">匿名即可解析，扫码登录后才有楼中楼</p>
           </div>
           <div class="sec-actions">
@@ -561,6 +561,7 @@
       function account(data) {
         const login = data.login || {}
         const rows = [
+          ["解析开关", data.config && data.config.biliEnabled ? '<span class="tag on">开</span>' : '<span class="tag off">关</span>'],
           ["登录状态", login.loggedIn ? '<span class="tag on">已登录</span>' : '<span class="tag off">未登录</span>'],
           ["昵称", login.uname ? esc(login.uname) : "—"],
           ["UID", login.mid ? esc(login.mid) : "—"],
@@ -605,13 +606,12 @@
         const onoff = on => (on ? '<span class="tag on">开</span>' : '<span class="tag off">关</span>')
         const ttl = Number(c.parseCacheTTL || 0)
         const rows = [
-          ["总开关", onoff(c.enabled)],
-          ["视频下载", esc(videoLabel(c.videoMode))],
-          ["渲染卡片", onoff(c.renderCard)],
           ["合并转发", c.cardAsForward ? "开" : "关（逐条直发）"],
-          ["同群冷却", ttl > 0 ? `${esc(ttl)} 秒` : "不限制"],
-          ["直播录制", Number(c.liveRecord || 0) > 0 ? `${esc(c.liveRecord)} 秒` : "不录制"],
-          ["私聊解析", onoff(c.parseInPrivate)]
+          ["渲染卡片图片", onoff(c.renderCard)],
+          ["视频下载", esc(videoLabel(c.videoMode))],
+          ["私聊也解析", onoff(c.parseInPrivate)],
+          ["重复解析冷却", ttl > 0 ? `${esc(ttl)} 秒` : "不限制"],
+          ["直播录制时长", Number(c.liveRecord || 0) > 0 ? `${esc(c.liveRecord)} 秒` : "不录制"]
         ]
         el("config").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")
       }
@@ -619,7 +619,7 @@
       function chips(data) {
         const c = data.config || {}
         const items = [
-          ["解析", c.enabled],
+          ["B站解析", c.biliEnabled],
           ["卡片", c.renderCard],
           ["视频", c.videoMode && c.videoMode !== "off"],
           ["哔哩哔哩", data.login && data.login.loggedIn],

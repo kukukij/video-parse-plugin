@@ -197,7 +197,10 @@ export default definePlugin({
       { name: "哔哩哔哩 Cookie 续期", overlap: "skip", timeout: "2m" }
     )
 
-    app.log("info", `已加载，解析开关=${app.config.enabled ? "开" : "关"}`)
+    app.log(
+      "info",
+      `已加载，哔哩哔哩=${app.config.biliEnabled === false ? "关" : "开"}，抖音=${app.config.douyinEnabled === true ? "开" : "关"}`
+    )
 
     // 定时器、冷却表不归 ctx 管，必须自己收；globalThis 上那份也要摘掉，
     // 否则热重载后面板页会拿到一个已经被 dispose 的旧实例
