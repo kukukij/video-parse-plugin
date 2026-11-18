@@ -104,6 +104,8 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | --- | --- | --- |
 | `#bili登录` | 私聊、仅主人 | 发二维码扫码登录哔哩哔哩，三分钟有效 |
 | `#bili登出` | 仅主人 | 退出登录并删除本地凭据 |
+| `#dy登录` | 私聊、仅主人 | 发二维码扫码登录抖音，三分钟有效 |
+| `#dy登出` | 仅主人 | 清掉配置里的抖音 Cookie |
 | `#bili状态` | 任意 | 解析统计、登录状态、冷却数量 |
 
 ## 登录与凭据
@@ -114,7 +116,7 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 
 ### 抖音 Cookie（可选）
 
-`douyinCookie` 默认留空，**不填也能正常用**：
+`douyinCookie` 默认留空，**不填也能正常用**。想开楼中楼就扫码登录：面板「抖音」卡片点「扫码登录」，或私聊发 `#dy登录`，登录成功后整串 Cookie 会自动写进 `douyinCookie`。
 
 | 能力 | 不填 Cookie | 填了 Cookie |
 | --- | --- | --- |
@@ -124,10 +126,11 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | 楼中楼（评论的回复） | 出不来（接口返回空） | 可以 |
 | 动图作品的原视频 | 取不到，只发静态图 | 可以（配合 `douyinNoteVideo`） |
 
-怎么填：浏览器打开 `douyin.com` 并登录 → 开发者工具 → 网络 → 随便点一个请求 → 复制请求头里 `Cookie` 的整行，粘贴到配置 `douyinCookie`。
+也可以手动填：浏览器打开 `douyin.com` 并登录 → 开发者工具 → 网络 → 随便点一个请求 → 复制请求头里 `Cookie` 的整行，粘贴到配置 `douyinCookie`。
 
 - 抖音 Cookie 存在 `config/video-parse.yaml` 里，是明文，面板也能看到；只在自己的机器上使用，别把配置文件发出去。
 - 哔哩哔哩的 SESSDATA 不走配置，单独加密存放。
+- 抖音扫码依赖 `@alemonjs/douyin`（已列为依赖），设备身份存在插件数据目录的 `douyin-device.json`，删掉它等于换一台新设备。
 
 ## 配置项
 

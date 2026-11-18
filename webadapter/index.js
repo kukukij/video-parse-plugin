@@ -10,7 +10,7 @@
  *          插件名取内核给的 `pluginName`（`video-parse`），而目录名是
  *          `video-parse-plugin`，两者不一定相同，故两个都试一遍再报错。
  *
- *          `login/*` 三条不是只读的：扫码要真调哔哩哔哩接口、登出要删凭据文件。它们仍走
+ *          `login/*` 与 `douyin/*` 六条不是只读的：扫码要真调平台接口、登出要改配置。它们仍走
  *          `registerApi`，因为 iframe 不透明、拿不到访问令牌，直连插件路由必 401；
  *          面板转发是唯一通道（理由见 init 里那段注释）。
  */
@@ -150,6 +150,50 @@ export function init(ctx) {
     if (rt === null) return { ok: false, error: "插件还没加载完成，稍等几秒再试" }
 
     await rt.login.forget()
+    return { ok: true }
+  })
+
+  /*
+   * 抖音的三条，形状与上面一致
+   *
+   * 抖音轮询给的是字符串状态（new/scanned/confirmed/expired），页面只认识哔哩哔哩那套
+   * 数字码；在适配层折算一次，页面就不用再分叉。error 也折成过期：都是「这张码不能再用了」。
+   */
+  const DOUYIN_STATUS = { waiting: 86101, scanned: 86090, confirmed: 0, expired: 86038, error: 86038 }
+
+  ctx.registerApi("douyin/qr", async () => {
+    const rt = runtime()
+    if (rt === null || typeof rt.douyin !== "object") return { ok: false, error: "插件还没加载完成，稍等几秒再试" }
+
+    const generated = await rt.douyin.generate()
+    if (generated === null) {
+      return { ok: false, error: "抖音没给回二维码（依赖缺失、设备注册失败或网络不通），稍后重试" }
+    }
+    return {
+      ok: true,
+      image: `data:image/png;base64,${generated.image}`,
+      remaining: generated.remaining
+    }
+  })
+
+  ctx.registerApi("douyin/poll", async () => {
+    const rt = runtime()
+    if (rt === null || typeof rt.douyin !== "object") return { ok: false, error: "插件还没加载完成，稍等几秒再试" }
+
+    const result = await rt.douyin.poll()
+    return {
+      ok: true,
+      status: DOUYIN_STATUS[result.status] ?? 86038,
+      message: result.message,
+      remaining: rt.douyin.remaining
+    }
+  })
+
+  ctx.registerApi("douyin/logout", async () => {
+    const rt = runtime()
+    if (rt === null || typeof rt.douyin !== "object") return { ok: false, error: "插件还没加载完成，稍等几秒再试" }
+
+    await rt.douyin.forget()
     return { ok: true }
   })
 }

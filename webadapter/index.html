@@ -382,8 +382,8 @@
             <p class="sec-desc">登录后可获取高清画质与 IP 属地</p>
           </div>
           <div class="sec-actions">
-            <button class="btn primary" id="loginBtn" type="button">扫码登录</button>
-            <button class="btn danger" id="logoutBtn" type="button" hidden>退出登录</button>
+            <button class="btn primary" id="loginBtn" type="button" data-kind="bili">扫码登录</button>
+            <button class="btn danger" id="logoutBtn" type="button" data-kind="bili" hidden>退出登录</button>
           </div>
         </div>
         <div class="kv" id="account"></div>
@@ -401,13 +401,17 @@
           </div>
           <div class="sec-text">
             <h2>抖音</h2>
-            <p class="sec-desc">匿名即可解析，Cookie 只用于楼中楼</p>
+            <p class="sec-desc">匿名即可解析，扫码登录后才有楼中楼</p>
+          </div>
+          <div class="sec-actions">
+            <button class="btn primary" id="douyinLoginBtn" type="button" data-kind="douyin">扫码登录</button>
+            <button class="btn danger" id="douyinLogoutBtn" type="button" data-kind="douyin" hidden>退出登录</button>
           </div>
         </div>
         <div class="kv" id="douyin"></div>
         <div class="note">
-          Cookie 留空也能解析作品、下载无水印视频、查看前 20 条评论；需要楼中楼时在配置里填
-          <code>douyinCookie</code>。
+          Cookie 留空也能解析作品、下载无水印视频、查看前 20 条评论；点「扫码登录」会自动把
+          Cookie 写进 <code>douyinCookie</code>，楼中楼与图文动图原视频才可用。
         </div>
       </section>
 
@@ -478,7 +482,7 @@
     <div class="overlay" id="overlay" hidden>
       <div class="modal">
         <div class="modal-head">
-          <strong>登录哔哩哔哩</strong>
+          <strong id="qrTitle">登录哔哩哔哩</strong>
           <button class="btn" id="closeQr" type="button">关闭</button>
         </div>
         <div class="qr">
@@ -753,17 +757,31 @@
       // ── 扫码登录 ────────────────────────────────────────────────────────────
       // 二维码在插件进程里生成，页面只负责显示与轮询。三者都走面板转发：iframe 没有
       // 令牌，直连插件路由会 401，这是唯一能到达后端的通道。
+      // 两个平台共用同一个弹层；抖音的状态在插件侧已折算成同一套数字码，这里不必分叉。
       const SUCCESS = 0
       const SCANNED = 86090
       const EXPIRED = 86038
       let pollTimer = null
-      let logoutArmed = false
+      let qrKind = "bili"
+
+      const QR = {
+        bili: { qr: "login/qr", poll: "login/poll", logout: "login/logout", title: "登录哔哩哔哩", tip: "用哔哩哔哩 App 扫码，3 分钟内有效" },
+        douyin: { qr: "douyin/qr", poll: "douyin/poll", logout: "douyin/logout", title: "登录抖音", tip: "用抖音 App 扫码，3 分钟内有效" }
+      }
 
       function stopPolling() {
         if (pollTimer !== null) {
           clearTimeout(pollTimer)
           pollTimer = null
         }
+      }
+
+      /** 打开弹层并取一张新二维码 */
+      function openQr(kind) {
+        qrKind = kind
+        el("qrTitle").textContent = QR[kind].title
+        el("overlay").hidden = false
+        requestQr()
       }
 
       /** 请求一张新二维码 */
@@ -775,7 +793,7 @@
         el("qrHint").hidden = true
         el("qrStatus").textContent = "正在生成二维码…"
 
-        const res = await fetchApi("login/qr", true)
+        const res = await fetchApi(QR[qrKind].qr, true)
         const data = (res && res.data) || {}
         el("qrSpinner").hidden = true
         if (!res.ok || !data.ok) {
@@ -785,18 +803,21 @@
         if (data.image) {
           el("qrImg").src = data.image
           el("qrImg").hidden = false
-        } else {
-          // 插件没装 qrcode 依赖时的降级：把链接摆出来，复制到手机浏览器一样能登
+        } else if (data.url) {
+          // 哔哩哔哩那边没装 qrcode 依赖时的降级：把链接摆出来，复制到手机浏览器一样能登
           el("qrHint").innerHTML = `未安装 <code>qrcode</code>，复制链接到手机浏览器打开：<br><code>${esc(data.url)}</code>`
           el("qrHint").hidden = false
+        } else {
+          el("qrStatus").textContent = "二维码生成失败，请点「刷新二维码」重试"
+          return
         }
-        el("qrStatus").textContent = "用哔哩哔哩 App 扫码，3 分钟内有效"
+        el("qrStatus").textContent = QR[qrKind].tip
         pollTimer = setTimeout(pollOnce, 1500)
       }
 
       /** 问一次扫码结果 */
       async function pollOnce() {
-        const res = await fetchApi("login/poll", true)
+        const res = await fetchApi(QR[qrKind].poll, true)
         const data = (res && res.data) || {}
         if (!res.ok || !data.ok) {
           el("qrStatus").textContent = (res && res.error) || data.error || "轮询失败"
@@ -827,21 +848,23 @@
       }
 
       /** 退出登录：两段式，避免手滑把还能用的 Cookie 删了 */
-      async function doLogout() {
-        if (!logoutArmed) {
-          logoutArmed = true
-          el("logoutBtn").textContent = "确认退出？"
+      async function doLogout(button) {
+        const path = QR[button.dataset.kind === "douyin" ? "douyin" : "bili"].logout
+        if (button.dataset.armed !== "1") {
+          button.dataset.armed = "1"
+          button.dataset.label = button.textContent
+          button.textContent = "确认退出？"
           setTimeout(() => {
-            logoutArmed = false
-            el("logoutBtn").textContent = "退出登录"
+            button.dataset.armed = ""
+            button.textContent = button.dataset.label
           }, 4000)
           return
         }
-        logoutArmed = false
-        el("logoutBtn").disabled = true
-        const res = await fetchApi("login/logout", true)
-        el("logoutBtn").disabled = false
-        el("logoutBtn").textContent = "退出登录"
+        button.dataset.armed = ""
+        button.disabled = true
+        const res = await fetchApi(path, true)
+        button.disabled = false
+        button.textContent = button.dataset.label
         if (!res.ok) {
           el("foot").textContent = `退出失败：${(res && res.error) || "未知错误"}`
           return
@@ -874,14 +897,16 @@
         const loggedIn = !!(data.login && data.login.loggedIn)
         el("loginBtn").hidden = loggedIn
         el("logoutBtn").hidden = !loggedIn
+        const cookieSet = !!(data.douyin && data.douyin.cookieSet)
+        el("douyinLoginBtn").hidden = cookieSet
+        el("douyinLogoutBtn").hidden = !cookieSet
         el("foot").textContent = "状态每 10 秒自动刷新"
       }
 
-      el("loginBtn").addEventListener("click", () => {
-        el("overlay").hidden = false
-        requestQr()
-      })
-      el("logoutBtn").addEventListener("click", doLogout)
+      el("loginBtn").addEventListener("click", () => openQr("bili"))
+      el("logoutBtn").addEventListener("click", () => doLogout(el("logoutBtn")))
+      el("douyinLoginBtn").addEventListener("click", () => openQr("douyin"))
+      el("douyinLogoutBtn").addEventListener("click", () => doLogout(el("douyinLogoutBtn")))
       el("closeQr").addEventListener("click", closeQr)
       el("refreshQr").addEventListener("click", requestQr)
       el("overlay").addEventListener("click", event => {

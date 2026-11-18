@@ -44,6 +44,7 @@
     "@yunzai-ng/core": ">=0.7.0"
   },
   "dependencies": {
+    "@alemonjs/douyin": "^2.1.1",
     "abogus": "^2.1.1",
     "qrcode": "^1.5.4"
   },

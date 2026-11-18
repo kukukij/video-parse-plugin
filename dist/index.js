@@ -19,6 +19,7 @@ import { registerDouyin } from "./handlers/douyin.js";
 import { registerAutoParse } from "./handlers/message.js";
 import { BilibiliApi, containsBilibiliLink } from "./services/bilibili.js";
 import { CookieKeeper } from "./services/cookie-refresh.js";
+import { DouyinLogin } from "./services/douyin-login.js";
 import { BilibiliLogin } from "./services/login.js";
 /** Cookie 续期检查的时刻：每天 4:30。挑这个点是因为群里没人说话，失败也不影响谁 */
 const REFRESH_CRON = "0 30 4 * * *";
@@ -47,10 +48,11 @@ export default definePlugin({
         const app = new BilibiliApp(ctx);
         const api = new BilibiliApi(app);
         const login = new BilibiliLogin(app);
+        const douyin = new DouyinLogin(app);
         const keeper = new CookieKeeper(app, login);
         // 给面板扩展页留一个口子。它在 iframe 里拿不到令牌，只能由面板带令牌转调
         // `registerApi`，而那条通道只能读到快照；扫码需要真调接口，故实例挂在这里
-        const runtime = { app, login, panelKey: randomBytes(16).toString("hex") };
+        const runtime = { app, login, douyin, panelKey: randomBytes(16).toString("hex") };
         globalThis[RUNTIME_KEY] = runtime;
         // 凭据、统计、群名都要从磁盘与 KV 里捞回来，才能正确应答第一条消息
         await app.restore();
@@ -58,7 +60,7 @@ export default definePlugin({
         // 自动解析：中间件而非命令，见 handlers/message.ts 文件头
         registerAutoParse(app, api);
         registerDouyin(app);
-        registerCommands(app, login);
+        registerCommands(app, login, douyin);
         // 面板页面在 iframe 里，拿不到令牌，故它读的是 status.json 快照（见 webadapter/）。
         // 这里的接口是给**带令牌**的外部调用方（脚本、接口调试）用的
         ctx.route("GET", "/status", () => app.snapshot());
@@ -144,7 +146,7 @@ export default definePlugin({
         // 启动后校验一次登录态：Cookie 过期就清掉并记日志，而不是等第一个链接解析失败
         ctx.on("app/ready", () => {
             if (ctx.app.policy.masters.length === 0) {
-                app.log("warn", "没有配置主人（bot.masterQQ），私聊「#bili登录 / #bili登出」不会响应；面板里的扫码登录不受影响");
+                app.log("warn", "没有配置主人（bot.masterQQ），私聊「#bili登录 / #dy登录」不会响应；面板里的扫码登录不受影响");
             }
             void login.refreshUserInfo();
         });

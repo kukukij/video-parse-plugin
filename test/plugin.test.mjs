@@ -757,9 +757,38 @@ function fakeLogin() {
   }
 }
 
-test("扩展页注册了扫码三条接口与口令接口", () => {
+/** 假的抖音登录服务，只记调用次数 */
+function fakeDouyin() {
+  const calls = { generate: 0, poll: 0, forget: 0 }
+  return {
+    calls,
+    remaining: 180,
+    async generate() {
+      calls.generate += 1
+      return { image: "iVBORw0KGgo=", remaining: 180 }
+    },
+    async poll() {
+      calls.poll += 1
+      return { status: "scanned", message: "已扫码" }
+    },
+    async forget() {
+      calls.forget += 1
+    }
+  }
+}
+
+test("扩展页注册了两个平台各三条扫码接口与口令接口", () => {
   const apis = pageContext()
-  assert.deepEqual([...apis.keys()].sort(), ["login/logout", "login/poll", "login/qr", "panel", "status"])
+  assert.deepEqual([...apis.keys()].sort(), [
+    "douyin/logout",
+    "douyin/poll",
+    "douyin/qr",
+    "login/logout",
+    "login/poll",
+    "login/qr",
+    "panel",
+    "status"
+  ])
 })
 
 test("插件没加载完成时接口给出可读的失败，而不是抛异常", async () => {
@@ -802,6 +831,55 @@ test("没装 qrcode 时 image 为空串，页面仍有链接可发", async () =>
   assert.equal(qr.ok, true)
   assert.equal(qr.image, "")
   assert.ok(qr.url.includes("passport.bilibili.com"))
+
+  delete globalThis[RUNTIME_KEY]
+})
+
+test("抖音扫码接口：二维码转 dataURL，状态折算成与哔哩哔哩一致的码，登出落到 douyin 上", async () => {
+  const apis = pageContext()
+  const douyin = fakeDouyin()
+  globalThis[RUNTIME_KEY] = { app: {}, login: fakeLogin(), douyin }
+
+  const qr = await apis.get("douyin/qr")()
+  assert.equal(qr.ok, true)
+  assert.equal(qr.image, "data:image/png;base64,iVBORw0KGgo=")
+  assert.equal(qr.remaining, 180)
+
+  const poll = await apis.get("douyin/poll")()
+  assert.equal(poll.ok, true)
+  assert.equal(poll.status, 86090)
+  assert.equal(douyin.calls.poll, 1)
+
+  await apis.get("douyin/logout")()
+  assert.equal(douyin.calls.forget, 1)
+
+  delete globalThis[RUNTIME_KEY]
+})
+
+test("抖音没给回二维码时返回可读的失败，而不是 ok", async () => {
+  const apis = pageContext()
+  const douyin = fakeDouyin()
+  douyin.generate = async () => null
+  globalThis[RUNTIME_KEY] = { app: {}, login: fakeLogin(), douyin }
+
+  const qr = await apis.get("douyin/qr")()
+  assert.equal(qr.ok, false)
+  assert.match(qr.error, /二维码/)
+
+  delete globalThis[RUNTIME_KEY]
+})
+
+test("抖音各状态折算成页面的数字码", async () => {
+  const apis = pageContext()
+  const douyin = fakeDouyin()
+  globalThis[RUNTIME_KEY] = { app: {}, login: fakeLogin(), douyin }
+
+  const cases = { waiting: 86101, scanned: 86090, confirmed: 0, expired: 86038, error: 86038 }
+  for (const [status, code] of Object.entries(cases)) {
+    douyin.poll = async () => ({ status, message: status })
+    const res = await apis.get("douyin/poll")()
+    assert.equal(res.status, code, status)
+  }
 
   delete globalThis[RUNTIME_KEY]
 })
@@ -1039,9 +1117,35 @@ test("生成二维码时记住 B 站下发的 Cookie，轮询原样带回", asyn
   app.dispose()
 })
 
+// ── 抖音登录服务 ──────────────────────────────────────────────────────────────
+const { DouyinLogin } = await load("services/douyin-login.js")
+
+test("抖音登录：没有会话时轮询直接给过期，登出把 Cookie 清空", async () => {
+  const patched = []
+  const ctx = fakeCtx()
+  ctx.config = {
+    get: () => config,
+    patch: async patch => {
+      patched.push(patch)
+      return config
+    },
+    onChange: () => () => {}
+  }
+  const app = new BilibiliApp(ctx)
+  const login = new DouyinLogin(app)
+
+  const result = await login.poll()
+  assert.equal(result.status, "expired")
+  assert.match(result.message, /扫码会话/)
+  assert.equal(login.remaining, 0)
+
+  await login.forget()
+  assert.deepEqual(patched.at(-1), { douyinCookie: "" })
+  app.dispose()
+})
+
 test("合流参数显式指定容器：输出是 .part，不写 -f mp4 时 ffmpeg 会以 EINVAL 退出（234）", () => {
   const args = buildMergeArgs("/tmp/a.m4v", "/tmp/b.m4a", "/tmp/out.mp4.part")
-
   // 两条输入，各自紧跟在自己的 -i 后面
   const inputs = args.filter((_, index) => args[index - 1] === "-i")
   assert.deepEqual(inputs, ["/tmp/a.m4v", "/tmp/b.m4a"])
@@ -1649,7 +1753,19 @@ test("抖音评论：内嵌回复取多条、作者标命中且排最前、楼�
     }
   }
 
-  const data = await new DouyinApi(new BilibiliApp(ctx)).fetchComments("7675505205047348543", 10, "SEC-AUTHOR")
+  // 没配 Cookie（匿名）时楼中楼接口必空，直接跳过，不白等
+  await new DouyinApi(new BilibiliApp(ctx)).fetchComments("7675505205047348543", 10, "SEC-AUTHOR")
+  assert.equal(replyCalls, 0)
+
+  // 楼中楼只对登录态开放：带上含 sessionid 的 Cookie
+  const savedCookie = config.douyinCookie
+  config.douyinCookie = "sessionid=abc; ttwid=abc"
+  let data
+  try {
+    data = await new DouyinApi(new BilibiliApp(ctx)).fetchComments("7675505205047348543", 10, "SEC-AUTHOR")
+  } finally {
+    config.douyinCookie = savedCookie
+  }
   assert.equal(data.items.length, 2)
 
   // 作者本人的评论排最前，并带「作者」标

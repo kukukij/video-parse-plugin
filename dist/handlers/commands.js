@@ -1,8 +1,8 @@
 /**
- * 模块职责：聊天侧命令 —— 扫码登录、登出、状态
- * 依赖方向：依赖 app、login
+ * 模块职责：聊天侧命令 —— 扫码登录、登出、状态（两个平台）
+ * 依赖方向：依赖 app、login、douyin-login
  * 生命周期：随插件注册，卸载时由内核回收
- * 注意事项：只留三条，且都带 `sub` 前缀，前缀之间互不为前缀，不必再靠优先级分派。
+ * 注意事项：只留五条，且都带 `sub` 前缀，前缀之间互不为前缀，不必再靠优先级分派。
  *          解析本身走中间件自动完成（见 message.ts），根目录不提供手动解析命令。
  */
 import { seg } from "@yunzai-ng/core";
@@ -15,11 +15,12 @@ const POLL_TIMEOUT = 180_000;
 /**
  * 注册全部命令
  * @param app 运行期状态
- * @param login 登录服务
+ * @param login 哔哩哔哩登录服务
+ * @param douyin 抖音登录服务
  *
  * 全部注册都经 `ctx` 完成，内核在卸载时自动回收，故这里不必返回句柄。
  */
-export function registerCommands(app, login) {
+export function registerCommands(app, login, douyin) {
     const { ctx } = app;
     ctx
         .command("#bili登录", {
@@ -47,6 +48,29 @@ export function registerCommands(app, login) {
         }
         await login.forget();
         await e.reply("已退出哔哩哔哩登录，凭据已删除");
+    });
+    ctx
+        .command("#dy登录", {
+        desc: "扫码登录抖音（私聊，仅主人）",
+        usage: "#dy登录",
+        group: "视频解析",
+        master: true,
+        scene: "private",
+        cooldown: "30s",
+        cooldownTip: "扫码还没结束，稍等一下"
+    })
+        .action(async (e) => {
+        await runDouyinLogin(app, douyin, e);
+    });
+    ctx
+        .command("#dy登出", { desc: "清除抖音登录 Cookie", group: "视频解析", master: true })
+        .action(async (e) => {
+        if (String(app.config.douyinCookie ?? "").trim() === "") {
+            await e.reply("本来就没有登录");
+            return;
+        }
+        await douyin.forget();
+        await e.reply("已清除抖音 Cookie；楼中楼与图文动图原视频将不可用");
     });
     ctx
         .command("#bili状态", { desc: "查看解析统计与登录状态", group: "视频解析" })
@@ -99,6 +123,43 @@ async function runLogin(app, login, e) {
         await e.reply("二维码超时了，需要的话再发一次「#bili登录」");
 }
 /**
+ * 走一遍抖音扫码流程：发二维码 → 轮询 → 回执
+ * @param app 运行期状态
+ * @param login 抖音登录服务
+ * @param e 消息事件
+ */
+async function runDouyinLogin(app, login, e) {
+    const generated = await login.generate();
+    if (generated === null) {
+        await e.reply("向抖音申请二维码失败（依赖没装、设备注册失败或网络不通），详情看日志");
+        return;
+    }
+    await e.reply([seg.image(Buffer.from(generated.image, "base64")), "\n用抖音 App 扫码登录，三分钟内有效"]);
+    let scannedNotified = false;
+    const deadline = Date.now() + POLL_TIMEOUT;
+    while (Date.now() < deadline && !app.ctx.signal.aborted) {
+        await sleep(POLL_INTERVAL, app.ctx.signal);
+        if (app.ctx.signal.aborted)
+            return;
+        const result = await login.poll();
+        if (result.status === "confirmed") {
+            await e.reply("抖音登录成功，Cookie 已写入配置");
+            return;
+        }
+        if (result.status === "scanned" && !scannedNotified) {
+            scannedNotified = true;
+            await e.reply("已扫码，请在手机上点确认");
+            continue;
+        }
+        if (result.status === "expired" || result.status === "error") {
+            await e.reply(`登录未完成：${result.message}`);
+            return;
+        }
+    }
+    if (!app.ctx.signal.aborted)
+        await e.reply("二维码超时了，需要的话再发一次「#dy登录」");
+}
+/**
  * 组装状态文案
  * @param app 运行期状态
  * @param e 消息事件
@@ -112,6 +173,7 @@ async function statusText(app, e) {
         `开关：${config.enabled ? "开" : "关"} · 视频：${videoLabel(config.videoMode)}`,
         `渲染卡片：${config.renderCard ? "开" : "关"} · 合并转发：${config.cardAsForward ? "开（卡片/视频/评论图）" : "关"}`,
         `登录：${app.isLoggedIn() ? `${snapshot.login.uname ?? "已登录"}（${snapshot.login.mid ?? "?"}）` : "未登录"}`,
+        `抖音 Cookie：${String(config.douyinCookie ?? "").trim() === "" ? "未填写（匿名解析）" : "已填写（楼中楼可用）"}`,
         `累计解析：${snapshot.stats.total} 次 · 今日 ${snapshot.stats.today} 次 · 冷却中 ${snapshot.cacheSize} 条`,
         `已运行：${snapshot.uptime}`
     ];
