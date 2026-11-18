@@ -6,6 +6,38 @@
 2. 确认 `enabled` 为开、机器人账号在目标群里。
 3. 群里直接贴链接即可，不用任何命令。
 
+## 运行依赖
+
+### ffmpeg（可选）
+
+| 功能 | 是否需要 ffmpeg | 没装时的表现 |
+| --- | --- | --- |
+| 卡片、图片转发、评论图 | 否 | 正常 |
+| 抖音视频下载 | 否 | 正常（单文件 mp4，不用合流） |
+| 哔哩哔哩视频下载 | 是 | 音视频无法合流，只发画面（没有声音） |
+| 直播录制（B 站 / 抖音） | 是 | 录制失败，只发直播卡片 |
+
+安装：
+
+```bash
+# Debian / Ubuntu
+sudo apt update && sudo apt install -y ffmpeg
+# CentOS / Rocky / AlmaLinux
+sudo dnf install -y epel-release && sudo dnf install -y ffmpeg
+# Arch
+sudo pacman -S ffmpeg
+# macOS
+brew install ffmpeg
+# Windows（PowerShell）
+winget install Gyan.FFmpeg
+```
+
+Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 有输出就行；插件用的是 `PATH` 里的 `ffmpeg`，没有单独的路径配置。
+
+### 渲染器（推荐）
+
+卡片是 HTML 模板，需要渲染器插件（如 `renderer-puppeteer`）。没装或渲染失败时自动回落为「封面图 + 文字」，不影响解析。
+
 ## 认哪些链接
 
 | 平台 | 例子 | 说明 |
@@ -76,9 +108,26 @@
 
 ## 登录与凭据
 
-- **哔哩哔哩**：扫码登录后凭据加密保存在插件数据目录，过期前自动续期；不登录也能解析，只是画质与评论受限。
-- **抖音**：在配置里填 `douyinCookie`，用于取楼中楼评论、以及动图作品的原视频；不填也能解析普通作品与评论（匿名接口）。
-- 凭据不会写进 `config/video-parse.yaml`，面板的配置接口也不返回凭据。
+### 哔哩哔哩（推荐）
+
+扫码登录后凭据加密保存在插件数据目录，过期前自动续期。不登录也能解析，只是高画质与部分评论受限。
+
+### 抖音 Cookie（可选）
+
+`douyinCookie` 默认留空，**不填也能正常用**：
+
+| 能力 | 不填 Cookie | 填了 Cookie |
+| --- | --- | --- |
+| 解析视频 / 图文、出卡片 | 可以 | 可以 |
+| 下载无水印视频 | 可以 | 可以 |
+| 主评论图 | 可以（匿名接口） | 可以 |
+| 楼中楼（评论的回复） | 出不来（接口返回空） | 可以 |
+| 动图作品的原视频 | 取不到，只发静态图 | 可以（配合 `douyinNoteVideo`） |
+
+怎么填：浏览器打开 `douyin.com` 并登录 → 开发者工具 → 网络 → 随便点一个请求 → 复制请求头里 `Cookie` 的整行，粘贴到配置 `douyinCookie`。
+
+- 抖音 Cookie 存在 `config/video-parse.yaml` 里，是明文，面板也能看到；只在自己的机器上使用，别把配置文件发出去。
+- 哔哩哔哩的 SESSDATA 不走配置，单独加密存放。
 
 ## 配置项
 
@@ -103,7 +152,7 @@
 | `douyinImagesAsForward` | `true` | 图文图片合并转发（一条消息一张）；总开关也开时做成总转发里的图文转发 |
 | `douyinNoteVideo` | `false` | 动图作品用 Cookie 取原视频一起发，约 1–2 秒；失败仍发静态图 |
 | `douyinLiveRecord` | `10` | 直播录制秒数（0–60），`0` = 只发卡片 |
-| `douyinCookie` | 空 | 抖音 Cookie，可选；填了评论更全、能取动图视频 |
+| `douyinCookie` | 空 | 抖音 Cookie，可选；不填也能解析，填了才能出楼中楼、取动图原视频 |
 
 ### 评论图
 
@@ -137,6 +186,8 @@
 | 卡片变成封面 + 文字 | 没装渲染器或渲染失败，看日志里的渲染错误 |
 | 群里出现两条不同形态的消息 | 账号「接口调用超时」太短，转发其实已发出又被判失败。把面板 → 账号 → napcat → 传输 → 接口调用超时调到 60 秒 |
 | 动图没有视频 | 需要 `douyinNoteVideo` 打开且填了 `douyinCookie` |
+| 抖音评论没有楼中楼 | 没填 `douyinCookie` 时匿名接口不返回回复，属正常现象 |
+| B 站视频发出来没有声音 | 没装 ffmpeg，音视频无法合流；装上并重启 |
 | 直播没有录制片段 | `liveRecord` / `douyinLiveRecord` 为 0，或房间已下播 |
 | 评论图没出来 | `commentSend` 关着、`commentCount` 为 0，或评论接口失败（只记日志不影响卡片） |
 

@@ -119,7 +119,7 @@ export const configSchema = s.object({
         .default("")
         .widget("textarea")
         .title("抖音 Cookie（可选）")
-        .desc("填了能拿楼中楼与更多评论")
+        .desc("可选，不填也能解析；填了才能出楼中楼、取动图原视频")
         .group("抖音")
         .order(50),
     commentSend: s

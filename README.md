@@ -51,6 +51,32 @@ npm run build
 - 卡片渲染依赖渲染器插件（如 `renderer-puppeteer`）；没有渲染器时自动回落为「封面图 + 文字」。
 - 哔哩哔哩登录：私聊机器人发 `#bili登录`，或面板里扫码；登录后能拿到更高画质与完整评论。
 
+### ffmpeg（可选）
+
+**不是必须的**，只有两个功能用到：
+
+| 功能 | 没装 ffmpeg 时 |
+| --- | --- |
+| 哔哩哔哩视频下载 | 音视频无法合流，只发画面（没有声音） |
+| 直播录制（B 站 / 抖音） | 录制失败，只发直播卡片 |
+
+卡片、图片、评论图、抖音视频下载都不需要 ffmpeg。
+
+```bash
+# Debian / Ubuntu
+sudo apt update && sudo apt install -y ffmpeg
+# CentOS / Rocky / AlmaLinux
+sudo dnf install -y epel-release && sudo dnf install -y ffmpeg
+# Arch
+sudo pacman -S ffmpeg
+# macOS
+brew install ffmpeg
+# Windows（PowerShell）
+winget install Gyan.FFmpeg
+```
+
+Windows 手动安装的话，把解压后的 `bin` 目录加进系统 `PATH`。装完执行 `ffmpeg -version` 有输出即可，插件用的是 `PATH` 里的 `ffmpeg`。
+
 ## 配置
 
 配置写在 `config/video-parse.yaml`，也可以直接在面板里改。常用项：
@@ -64,7 +90,7 @@ npm run build
 | `douyinVideo` | `off` | 抖音视频下载档位 |
 | `douyinImagesAsForward` | `true` | 抖音图片合并转发（一条消息一张） |
 | `douyinNoteVideo` | `false` | 动图作品用 Cookie 取原视频一起发 |
-| `douyinCookie` | 空 | 抖音 Cookie，填了评论更全、能取动图视频 |
+| `douyinCookie` | 空 | 抖音 Cookie，可选；填了才能出楼中楼、取动图原视频 |
 | `commentSend` | `true` | 是否发评论图（两平台共用） |
 | `cardAsForward` | `true` | 合并转发总开关 |
 | `liveRecord` / `douyinLiveRecord` | `10` | 直播录制秒数，`0` = 只发卡片 |
