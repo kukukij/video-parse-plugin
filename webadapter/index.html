@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>B站解析</title>
+    <title>视频解析</title>
     <!--
       面板把扩展页面装进不带 allow-same-origin 的 iframe：面板的样式与令牌都进不来。
       引一行 SDK 即可拿到设计令牌（--text / --panel / --accent 等）并跟随亮暗主题。
@@ -14,171 +14,462 @@
         --line: var(--border, #e4e8ed);
         --muted: var(--text-2, #61666d);
         --pink: var(--accent, #fb7299);
+        --soft: color-mix(in srgb, var(--text, #18191c) 4%, transparent);
+        --soft-2: color-mix(in srgb, var(--text, #18191c) 7%, transparent);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 20px;
+        padding: 22px;
         background: transparent;
         color: var(--text, #18191c);
         font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
       .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
       .card {
         background: var(--panel, #fff);
         border: 1px solid var(--line);
-        border-radius: var(--r-card, 14px);
+        border-radius: 16px;
         padding: 18px 20px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, .03);
       }
-      header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-      .logo {
-        width: 44px; height: 44px; border-radius: 12px; flex: none;
-        display: grid; place-items: center;
-        background: color-mix(in srgb, var(--pink) 16%, transparent);
-        color: var(--pink);
-      }
-      h1 { font-size: 18px; margin: 0; }
-      .sub { color: var(--muted); font-size: 13px; }
-      .chips { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
-      .chip {
-        padding: 4px 10px; border-radius: 999px; font-size: 12px;
-        border: 1px solid var(--line); color: var(--muted);
-      }
-      .chip.on { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 40%, transparent); }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-      .metric { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-      .metric .k { color: var(--muted); font-size: 12px; }
-      .metric .v { font-size: 24px; font-weight: 700; margin-top: 2px; }
-      .metric .v small { font-size: 13px; font-weight: 400; color: var(--muted); }
-      h2 { font-size: 15px; margin: 0 0 12px; }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
-      th { color: var(--muted); font-weight: 500; }
-      tr:last-child td { border-bottom: none; }
-      .tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
-      .tag.on { color: #18a058; border-color: color-mix(in srgb, #18a058 40%, transparent); }
-      .tag.off { color: #d03050; border-color: color-mix(in srgb, #d03050 40%, transparent); }
-      .grow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-      .grow:last-child { border-bottom: none; }
-      .avatar { width: 32px; height: 32px; border-radius: 9px; flex: none; object-fit: cover; background: var(--line); }
-      .grow .meta { min-width: 0; flex: 1; }
-      .grow .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .grow .no { color: var(--muted); font-size: 12px; }
-      .recent { display: flex; flex-direction: column; gap: 10px; }
-      .row { display: flex; gap: 10px; align-items: baseline; }
-      .row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .row .m { color: var(--muted); font-size: 12px; flex: none; }
-      .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 40px; }
-      .kv div { display: flex; gap: 12px; font-size: 13px; padding: 5px 0; align-items: baseline; }
-      .kv span:first-child { color: var(--muted); flex: none; width: 76px; }
-      .kv span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      @media (max-width: 720px) { .kv { grid-template-columns: minmax(0, 1fr); } }
-      .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
-      .foot { color: var(--muted); font-size: 12px; text-align: center; }
 
-      /* 账号卡片：标题与按钮同一行 */
-      .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-      .head h2 { margin: 0; }
-      .head .actions { margin-left: auto; display: flex; gap: 8px; }
+      /* 顶部 */
+      .hero {
+        position: relative;
+        overflow: hidden;
+        padding: 22px 24px;
+        background:
+          linear-gradient(135deg, color-mix(in srgb, var(--pink) 11%, var(--panel, #fff)), var(--panel, #fff) 62%);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -70px;
+        top: -110px;
+        width: 260px;
+        height: 260px;
+        border-radius: 50%;
+        background: radial-gradient(circle, color-mix(in srgb, var(--pink) 26%, transparent), transparent 68%);
+        pointer-events: none;
+      }
+      .hero-main { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; }
+      .logo {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        background: linear-gradient(135deg, var(--pink), color-mix(in srgb, var(--pink) 58%, #ff9a6b));
+        box-shadow: 0 7px 18px color-mix(in srgb, var(--pink) 34%, transparent);
+      }
+      .eyebrow {
+        font-size: 10px;
+        line-height: 14px;
+        letter-spacing: .16em;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 1px;
+      }
+      h1 { font-size: 21px; line-height: 28px; margin: 0; letter-spacing: -.2px; }
+      .sub { color: var(--muted); font-size: 12.5px; line-height: 18px; margin-top: 2px; }
+      .chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        line-height: 16px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: color-mix(in srgb, var(--panel, #fff) 72%, transparent);
+      }
+      .chip i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--muted);
+        opacity: .45;
+        flex: none;
+      }
+      .chip.on {
+        color: var(--pink);
+        border-color: color-mix(in srgb, var(--pink) 38%, transparent);
+        background: color-mix(in srgb, var(--pink) 7%, transparent);
+      }
+      .chip.on i {
+        background: var(--pink);
+        opacity: 1;
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--pink) 16%, transparent);
+      }
+
+      /* 数据 */
+      .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+      .metric {
+        position: relative;
+        overflow: hidden;
+        background: var(--panel, #fff);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px 13px;
+      }
+      .metric::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 14px;
+        bottom: 14px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: var(--pink);
+        opacity: .55;
+      }
+      .metric .k { color: var(--muted); font-size: 12px; line-height: 17px; }
+      .metric .v {
+        font-size: 26px;
+        line-height: 34px;
+        font-weight: 700;
+        letter-spacing: -.6px;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+      }
+      .metric .v small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
+      /* 时长是文字，字号收一档，四张卡看起来才齐 */
+      .metric .v.txt { font-size: 20px; letter-spacing: -.3px; }
+
+      /* 区块标题 */
+      .sec { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; }
+      .sec-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 11px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: var(--pink);
+        background: color-mix(in srgb, var(--pink) 10%, transparent);
+      }
+      .sec-icon.dy { color: var(--text, #18191c); background: var(--soft-2); }
+      .sec-text { min-width: 0; }
+      h2 { font-size: 15px; line-height: 21px; margin: 0; }
+      .sec-desc { font-size: 12px; line-height: 17px; color: var(--muted); margin-top: 1px; }
+      .sec-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+      /* 键值 */
+      .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 34px; }
+      .kv > div {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+        font-size: 13px;
+        min-width: 0;
+      }
+      .kv span:first-child { color: var(--muted); flex: none; width: 84px; font-size: 12.5px; }
+      .kv span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .note {
+        margin-top: 12px;
+        padding: 9px 12px;
+        border-radius: 10px;
+        background: var(--soft);
+        color: var(--muted);
+        font-size: 12.5px;
+        line-height: 1.65;
+      }
+      .mode {
+        font-size: 12.5px;
+        line-height: 1.65;
+        color: var(--muted);
+        background: var(--soft);
+        border-radius: 10px;
+        padding: 9px 12px;
+        margin-bottom: 10px;
+      }
+
+      /* 标签与按钮 */
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        line-height: 16px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: transparent;
+        white-space: nowrap;
+      }
+      .tag.on {
+        color: #18a058;
+        border-color: color-mix(in srgb, #18a058 38%, transparent);
+        background: color-mix(in srgb, #18a058 8%, transparent);
+      }
+      .tag.off {
+        color: #d03050;
+        border-color: color-mix(in srgb, #d03050 38%, transparent);
+        background: color-mix(in srgb, #d03050 8%, transparent);
+      }
       .btn {
-        font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 8px; cursor: pointer;
-        border: 1px solid var(--line); background: transparent; color: var(--text, #18191c);
-        transition: border-color .15s, color .15s, background .15s;
+        font: inherit;
+        font-size: 12.5px;
+        line-height: 18px;
+        padding: 6px 12px;
+        border-radius: 9px;
+        cursor: pointer;
+        border: 1px solid var(--line);
+        background: var(--panel, #fff);
+        color: var(--text, #18191c);
+        transition: border-color .15s, color .15s, background .15s, transform .1s;
       }
       .btn:hover { border-color: var(--pink); color: var(--pink); }
+      .btn:active { transform: translateY(1px); }
       .btn.primary { background: var(--pink); border-color: var(--pink); color: #fff; }
-      .btn.primary:hover { filter: brightness(1.05); color: #fff; }
+      .btn.primary:hover { color: #fff; filter: brightness(1.05); }
       .btn.danger:hover { border-color: #d03050; color: #d03050; }
       .btn[disabled] { opacity: .55; cursor: default; }
 
-      /* 二维码弹层：iframe 内 fixed 即可，无需关心父页面滚动 */
+      /* 群列表 */
+      .list { display: flex; flex-direction: column; gap: 2px; }
+      .grow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 10px;
+        border-radius: 11px;
+        border: 1px solid transparent;
+        transition: background .15s, border-color .15s;
+      }
+      .grow:hover { background: var(--soft); border-color: var(--line); }
+      .avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        flex: none;
+        object-fit: cover;
+        background: var(--line);
+      }
+      .grow .meta { min-width: 0; flex: 1; }
+      .grow .name { font-size: 13px; line-height: 19px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .grow .no { color: var(--muted); font-size: 11.5px; line-height: 16px; font-variant-numeric: tabular-nums; }
+
+      /* 最近解析 */
+      .recent { display: flex; flex-direction: column; gap: 2px; }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 10px;
+        border-radius: 10px;
+        transition: background .15s;
+      }
+      .row:hover { background: var(--soft); }
+      .row .t { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row .m { color: var(--muted); font-size: 11.5px; flex: none; white-space: nowrap; }
+
+      .empty { color: var(--muted); font-size: 12.5px; padding: 10px 2px; }
+      .foot { color: var(--muted); font-size: 11.5px; text-align: center; padding: 2px 0; }
+
+      /* 二维码弹层 */
       .overlay {
-        position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
-        background: rgba(0, 0, 0, .45); padding: 20px;
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        background: color-mix(in srgb, #000 42%, transparent);
+        backdrop-filter: blur(4px);
       }
       .overlay[hidden] { display: none; }
       .modal {
-        width: min(380px, 100%); background: var(--panel, #fff); border-radius: 14px;
-        padding: 18px 20px 16px; box-shadow: 0 18px 48px rgba(0, 0, 0, .22);
+        width: min(380px, 100%);
+        background: var(--panel, #fff);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px 20px 16px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, .28);
       }
       .modal-head { display: flex; align-items: center; margin-bottom: 4px; }
       .modal-head strong { font-size: 15px; }
       .modal-head .btn { margin-left: auto; }
       .qr { display: grid; place-items: center; gap: 10px; padding: 14px 0 6px; min-height: 236px; }
       .qr img {
-        width: 216px; height: 216px; display: block; border-radius: 8px;
-        image-rendering: pixelated; background: #fff;
+        width: 216px;
+        height: 216px;
+        display: block;
+        border-radius: 10px;
+        image-rendering: pixelated;
+        background: #fff;
       }
-      .qr .hint { color: var(--muted); font-size: 13px; text-align: center; word-break: break-all; }
+      .qr .hint { color: var(--muted); font-size: 12.5px; text-align: center; word-break: break-all; }
       .qr .hint a { color: var(--pink); }
       .qr .spinner {
-        width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line);
-        border-top-color: var(--pink); animation: spin .8s linear infinite;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid var(--line);
+        border-top-color: var(--pink);
+        animation: spin .8s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
       .modal-foot { display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
       .modal-foot span { color: var(--muted); font-size: 12px; flex: 1; }
       .modal-foot .btn { padding: 4px 10px; font-size: 12px; }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
-             background: color-mix(in srgb, var(--text) 6%, transparent); padding: 1px 5px; border-radius: 4px; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        background: var(--soft-2);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+
+      @media (max-width: 860px) {
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 720px) {
+        body { padding: 14px; }
+        .kv { grid-template-columns: minmax(0, 1fr); }
+        .hero-main { flex-wrap: wrap; }
+        .chips { margin-left: 0; width: 100%; justify-content: flex-start; }
+        .card { padding: 16px; }
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div class="card">
-        <header>
+      <section class="card hero">
+        <div class="hero-main">
           <div class="logo">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
                  stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="7" width="18" height="12" rx="2" />
-              <path d="M8 21h8M12 19v2M10 11l4 2-4 2z" />
+              <rect x="3" y="6.5" width="18" height="13" rx="3" />
+              <path d="M8 21h8M12 19.5V21" />
+              <path d="M10.4 10.6l4.2 2.4-4.2 2.4z" />
             </svg>
           </div>
-          <div>
-            <h1>B站解析</h1>
+          <div class="hero-text">
+            <div class="eyebrow">VIDEO PARSE</div>
+            <h1>视频解析</h1>
             <div class="sub" id="sub">正在读取状态…</div>
           </div>
           <div class="chips" id="chips"></div>
-        </header>
-      </div>
+        </div>
+      </section>
 
       <div class="grid" id="metrics"></div>
 
-      <div class="card">
-        <div class="head">
-          <h2>账号</h2>
-          <div class="actions">
+      <section class="card">
+        <div class="sec">
+          <div class="sec-icon">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="7" width="18" height="12" rx="2" />
+              <path d="M8 21h8M12 19v2" />
+              <path d="M10 11l4 2-4 2z" />
+            </svg>
+          </div>
+          <div class="sec-text">
+            <h2>哔哩哔哩账号</h2>
+            <p class="sec-desc">登录后可获取高清画质与 IP 属地</p>
+          </div>
+          <div class="sec-actions">
             <button class="btn primary" id="loginBtn" type="button">扫码登录</button>
             <button class="btn danger" id="logoutBtn" type="button" hidden>退出登录</button>
           </div>
         </div>
         <div class="kv" id="account"></div>
-      </div>
+        <div class="note">不登录也能解析公开视频。</div>
+      </section>
 
-      <div class="card">
-        <div class="head">
-          <h2>群白名单 / 黑名单</h2>
-          <div class="actions">
-            <button class="btn" id="reloadGroups" type="button">刷新群列表</button>
+      <section class="card">
+        <div class="sec">
+          <div class="sec-icon dy">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 4v10.5a3.5 3.5 0 1 1-3-3.46" />
+              <path d="M14.5 4c.6 2.3 2.1 3.7 4.5 4.1" />
+            </svg>
+          </div>
+          <div class="sec-text">
+            <h2>抖音</h2>
+            <p class="sec-desc">匿名即可解析，Cookie 只用于楼中楼</p>
           </div>
         </div>
-        <div class="sub" id="mode" style="margin-bottom: 10px"></div>
-        <div id="joined"></div>
-      </div>
-
-      <div class="card">
-        <h2>最近解析</h2>
-        <div class="recent" id="recent"></div>
-      </div>
-
-      <div class="card">
-        <h2>当前设置</h2>
-        <div class="kv" id="config"></div>
-        <div class="empty" style="margin-top: 10px">
-          这里只读。其余项去「插件 → bilibili → 配置」改；群黑名单在上面点选即可。
-          扫码登录点上面的「扫码登录」；面板打不开时，主人私聊 <code>#bili登录</code> 仍可用。
+        <div class="kv" id="douyin"></div>
+        <div class="note">
+          Cookie 留空也能解析作品、下载无水印视频、查看前 20 条评论；需要楼中楼时在配置里填
+          <code>douyinCookie</code>。
         </div>
-      </div>
+      </section>
+
+      <section class="card">
+        <div class="sec">
+          <div class="sec-icon">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20" />
+              <circle cx="10" cy="8" r="3.5" />
+              <path d="M20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.6a3.5 3.5 0 0 1 0 6.8" />
+            </svg>
+          </div>
+          <div class="sec-text">
+            <h2>群名单</h2>
+            <p class="sec-desc">只影响本插件，其他插件照常工作</p>
+          </div>
+          <div class="sec-actions">
+            <button class="btn" id="reloadGroups" type="button">刷新</button>
+          </div>
+        </div>
+        <div class="mode" id="mode"></div>
+        <div id="joined" class="list"></div>
+      </section>
+
+      <section class="card">
+        <div class="sec">
+          <div class="sec-icon">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+          </div>
+          <div class="sec-text">
+            <h2>最近解析</h2>
+            <p class="sec-desc">最多保留 12 条</p>
+          </div>
+        </div>
+        <div class="recent" id="recent"></div>
+      </section>
+
+      <section class="card">
+        <div class="sec">
+          <div class="sec-icon">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7h9M18 7h2M4 17h2M11 17h9" />
+              <circle cx="15.5" cy="7" r="2.2" />
+              <circle cx="8.5" cy="17" r="2.2" />
+            </svg>
+          </div>
+          <div class="sec-text">
+            <h2>当前设置</h2>
+            <p class="sec-desc">只读，修改请前往插件配置</p>
+          </div>
+        </div>
+        <div class="kv" id="config"></div>
+        <div class="note">
+          更多选项在「插件 → video-parse → 配置」；面板打不开时，主人可私聊 <code>#bili登录</code>。
+        </div>
+      </section>
 
       <div class="foot" id="foot"></div>
     </div>
@@ -187,16 +478,16 @@
     <div class="overlay" id="overlay" hidden>
       <div class="modal">
         <div class="modal-head">
-          <strong>扫码登录 B 站</strong>
+          <strong>登录哔哩哔哩</strong>
           <button class="btn" id="closeQr" type="button">关闭</button>
         </div>
         <div class="qr">
           <div class="spinner" id="qrSpinner"></div>
-          <img id="qrImg" alt="B 站登录二维码" hidden />
+          <img id="qrImg" alt="登录二维码" hidden />
           <div class="hint" id="qrHint" hidden></div>
         </div>
         <div class="modal-foot">
-          <span id="qrStatus">请用 B 站手机客户端扫码</span>
+          <span id="qrStatus">请用哔哩哔哩 App 扫码</span>
           <button class="btn" id="refreshQr" type="button">刷新二维码</button>
         </div>
       </div>
@@ -231,6 +522,15 @@
         })
       }
 
+      /** 档位 → 展示名，与 src/utils/video.ts 的 VIDEO_LABEL 保持一致 */
+      const VIDEO_LABEL = {
+        off: "不下载", auto: "自动", "480p": "480P", "540p": "540P",
+        "720p": "720P", "1080p": "1080P", "1080p60": "1080P60", "4k": "4K"
+      }
+      function videoLabel(mode) {
+        return VIDEO_LABEL[mode] || mode || "不下载"
+      }
+
       /** 转义，避免标题里的 < > 破坏结构 */
       function esc(value) {
         return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch])
@@ -248,9 +548,9 @@
           { k: "已运行", v: "", text: data.uptime }
         ]
         el("metrics").innerHTML = items
-          .map(item => `<div class="metric"><div class="k">${esc(item.k)}</div><div class="v">${
-            item.text !== undefined ? esc(item.text) : esc(item.v) + `<small> ${esc(item.unit)}</small>`
-          }</div></div>`)
+          .map(item => `<div class="metric"><div class="k">${esc(item.k)}</div><div class="v${
+            item.text !== undefined ? " txt" : ""
+          }">${item.text !== undefined ? esc(item.text) : esc(item.v) + `<small> ${esc(item.unit)}</small>`}</div></div>`)
           .join("")
       }
 
@@ -265,32 +565,51 @@
         el("account").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")
       }
 
+      function douyin(data) {
+        const d = data.douyin || {}
+        const rows = [
+          ["解析开关", d.enabled ? '<span class="tag on">开</span>' : '<span class="tag off">关</span>'],
+          ["视频下载", esc(videoLabel(d.videoMode))],
+          ["图文图片", d.imagesAsForward ? "嵌套转发" : "单条多图"],
+          ["动图发视频", d.noteVideo ? "开" : "关"],
+          ["评论图", d.commentEnabled && Number(d.commentCount || 0) > 0 ? `${esc(d.commentCount)} 条` : "不发送"],
+          ["直播录制", Number(d.liveRecord || 0) > 0 ? `${esc(d.liveRecord)} 秒` : "不录制"],
+          ["登录 Cookie", d.cookieSet ? '<span class="tag on">已填写</span>' : '<span class="tag">未填写（匿名可用）</span>']
+        ]
+        el("douyin").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")
+      }
+
       function recent(data) {
         const list = data.recent || []
         if (list.length === 0) {
-          el("recent").innerHTML = '<div class="empty">还没有解析记录。</div>'
+          el("recent").innerHTML = '<div class="empty">还没有解析记录</div>'
           return
         }
         el("recent").innerHTML = list
-          .map(item => `<div class="row"><span class="t">${esc(item.title)}</span><span class="m">${
-            esc(item.group || item.gid)
-          } · ${new Date(item.at).toLocaleTimeString("zh-CN")}</span></div>`)
+          .map(item => {
+            // 抖音记录在内部标成 DY-，据此给出平台标签，免得两边的标题混在一起分不清
+            const plato = String(item.bvid || "").startsWith("DY-") ? "抖音" : "哔哩哔哩"
+            return `<div class="row"><span class="t"><span class="tag" style="margin-right:6px">${plato}</span>${esc(
+              item.title
+            )}</span><span class="m">${esc(item.group || item.gid)} · ${new Date(item.at).toLocaleTimeString("zh-CN")}</span></div>`
+          })
           .join("")
       }
 
       function config(data) {
         const c = data.config || {}
+        const onoff = on => (on ? '<span class="tag on">开</span>' : '<span class="tag off">关</span>')
+        const ttl = Number(c.parseCacheTTL || 0)
         const rows = [
-          ["总开关", c.enabled ? "开" : "关"],
-          ["发送模式", c.sendMode === "with-video" ? "信息 + 视频" : "仅信息"],
-          ["渲染卡片", c.renderCard ? "开" : "关"],
-          ["合并转发", c.cardAsForward ? "开" : "关"],
-          ["画质", c.videoQuality],
-          ["视频上限", `${c.maxVideoSizeMB} MB`],
-          ["同群冷却", `${c.parseCacheTTL} 秒`],
-          ["私聊解析", c.parseInPrivate ? "开" : "关"]
+          ["总开关", onoff(c.enabled)],
+          ["视频下载", esc(videoLabel(c.videoMode))],
+          ["渲染卡片", onoff(c.renderCard)],
+          ["合并转发", c.cardAsForward ? "开" : "关（逐条直发）"],
+          ["同群冷却", ttl > 0 ? `${esc(ttl)} 秒` : "不限制"],
+          ["直播录制", Number(c.liveRecord || 0) > 0 ? `${esc(c.liveRecord)} 秒` : "不录制"],
+          ["私聊解析", onoff(c.parseInPrivate)]
         ]
-        el("config").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${esc(v)}</span></div>`).join("")
+        el("config").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")
       }
 
       function chips(data) {
@@ -298,11 +617,15 @@
         const items = [
           ["解析", c.enabled],
           ["卡片", c.renderCard],
-          ["视频", c.sendMode === "with-video"],
-          ["登录", data.login && data.login.loggedIn]
+          ["视频", c.videoMode && c.videoMode !== "off"],
+          ["哔哩哔哩", data.login && data.login.loggedIn],
+          ["抖音", data.douyin && data.douyin.enabled]
         ]
         el("chips").innerHTML = items
-          .map(([label, on]) => `<span class="chip ${on ? "on" : ""}">${label}${on ? " 开" : " 关"}</span>`)
+          .map(
+            ([label, on]) =>
+              `<span class="chip ${on ? "on" : ""}" title="${label}${on ? "已开启" : "已关闭"}"><i></i>${label}</span>`
+          )
           .join("")
       }
 
@@ -324,12 +647,12 @@
       /** 读回账号已加入的群（头像、群名由平台给，缺头像时用 QQ 群头像地址兜底） */
       async function loadJoined() {
         if (!(await ensureKey())) {
-          el("joined").innerHTML = '<div class="empty">拿不到口令，刷新页面再试。</div>'
+          el("joined").innerHTML = '<div class="empty">没拿到访问口令，刷新页面再试。</div>'
           return
         }
-        el("joined").innerHTML = '<div class="empty">正在读取账号已加入的群…</div>'
+        el("joined").innerHTML = '<div class="empty">正在读取群列表…</div>'
         try {
-          const res = await fetch(`/plugin/bilibili/panel/groups?k=${encodeURIComponent(panelKey)}`, { cache: "no-store" })
+          const res = await fetch(`/plugin/video-parse/panel/groups?k=${encodeURIComponent(panelKey)}`, { cache: "no-store" })
           const data = await res.json()
           if (!data.ok) throw new Error(data.error || "读取失败")
           joinedGroups = data.groups || []
@@ -347,8 +670,8 @@
         const active = !!(snapshot && snapshot.whitelistActive)
 
         el("mode").textContent = active
-          ? "白名单生效中：只有名单内的群会解析，黑名单优先。只影响本插件，别的插件照常收消息。"
-          : "白名单为空：除黑名单里的群，其他群都解析。只影响本插件，别的插件照常收消息。"
+          ? "白名单生效：只有名单内的群会解析，黑名单优先。"
+          : "白名单为空：除黑名单外全部解析。"
 
         // 名单里可能有已经退掉的群：一并列出来，否则解不掉
         for (const gid of [...blocked, ...white]) {
@@ -362,7 +685,7 @@
           }
         }
         if (joinedGroups.length === 0) {
-          el("joined").innerHTML = '<div class="empty">账号还没加入任何群，或者适配器不支持列群。</div>'
+          el("joined").innerHTML = '<div class="empty">没读到群列表：账号还没加群，或适配器不支持。</div>'
           return
         }
 
@@ -383,10 +706,10 @@
               </div>
               <button class="btn" type="button" data-gid="${esc(group.gid)}" data-list="white" data-on="${
                 inWhite ? "0" : "1"
-              }">${inWhite ? "移出白名单" : "白名单"}</button>
+              }">${inWhite ? "移出白名单" : "加入白名单"}</button>
               <button class="btn ${off ? "" : "danger"}" type="button" data-gid="${esc(group.gid)}" data-list="black" data-on="${
                 off ? "0" : "1"
-              }">${off ? "解除" : "拉黑"}</button>
+              }">${off ? "取消拉黑" : "拉黑"}</button>
             </div>`
           })
           .join("")
@@ -397,7 +720,7 @@
         button.disabled = true
         try {
           const res = await fetch(
-            `/plugin/bilibili/panel/list?k=${encodeURIComponent(panelKey)}&gid=${encodeURIComponent(gid)}&list=${list}&on=${on ? 1 : 0}`,
+            `/plugin/video-parse/panel/list?k=${encodeURIComponent(panelKey)}&gid=${encodeURIComponent(gid)}&list=${list}&on=${on ? 1 : 0}`,
             { cache: "no-store" }
           )
           const data = await res.json()
@@ -464,10 +787,10 @@
           el("qrImg").hidden = false
         } else {
           // 插件没装 qrcode 依赖时的降级：把链接摆出来，复制到手机浏览器一样能登
-          el("qrHint").innerHTML = `没装 <code>qrcode</code> 依赖，复制这个链接到手机浏览器打开：<br><code>${esc(data.url)}</code>`
+          el("qrHint").innerHTML = `未安装 <code>qrcode</code>，复制链接到手机浏览器打开：<br><code>${esc(data.url)}</code>`
           el("qrHint").hidden = false
         }
-        el("qrStatus").textContent = "请用 B 站手机客户端扫码（3 分钟内有效）"
+        el("qrStatus").textContent = "用哔哩哔哩 App 扫码，3 分钟内有效"
         pollTimer = setTimeout(pollOnce, 1500)
       }
 
@@ -538,11 +861,12 @@
           el("metrics").innerHTML = ""
           return
         }
-        el("sub").textContent = `v${data.version} · 更新于 ${new Date(data.updatedAt).toLocaleTimeString("zh-CN")}`
+        el("sub").textContent = `v${data.version} · ${new Date(data.updatedAt).toLocaleTimeString("zh-CN")} 更新`
         snapshot = data
         chips(data)
         metrics(data)
         account(data)
+        douyin(data)
         renderJoined()
         recent(data)
         config(data)
@@ -550,7 +874,7 @@
         const loggedIn = !!(data.login && data.login.loggedIn)
         el("loginBtn").hidden = loggedIn
         el("logoutBtn").hidden = !loggedIn
-        el("foot").textContent = "数据来自插件写下的状态快照，每 10 秒刷新一次"
+        el("foot").textContent = "状态每 10 秒自动刷新"
       }
 
       el("loginBtn").addEventListener("click", () => {

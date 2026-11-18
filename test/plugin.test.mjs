@@ -15,10 +15,21 @@ const DIST = new URL("../dist/", import.meta.url)
 const load = path => import(pathToFileURL(join(DIST.pathname, path)).href)
 
 const { BilibiliApp } = await load("core/app.js")
-const { BilibiliApi, buildMergeArgs, containsBilibiliLink, extractBvid, extractLinkFromSegments, streamUrls } =
-  await load("services/bilibili.js")
+const {
+  BilibiliApi,
+  buildMergeArgs,
+  containsBilibiliLink,
+  extractBvid,
+  extractLinkFromSegments,
+  extractLiveRoom,
+  parseLivePage,
+  streamUrls
+} = await load("services/bilibili.js")
 const { deliver, cardData } = await load("handlers/card.js")
 const { sendComments } = await load("handlers/comments.js")
+const { DouyinApi, parseLiveInfo, parseNoteVideo } = await load("services/douyin.js")
+const { deliver: deliverDouyin } = await load("handlers/douyin.js")
+const { resolveVideo, resolveDouyinVideo, videoLabel } = await load("utils/video.js")
 const { encryptString, decryptString } = await load("utils/crypto.js")
 const { formatCount, formatDuration } = await load("utils/format.js")
 
@@ -65,12 +76,13 @@ const config = {
   enabled: true,
   parseInPrivate: false,
   ignorePrefixes: ["#"],
-  sendMode: "info-only",
+  // 画质与体积上限已合并成档位
+  videoMode: "off",
+  douyinVideo: "off",
+  douyinImagesAsForward: true,
   renderCard: false,
   cardAsForward: true,
   atSender: false,
-  maxVideoSizeMB: 100,
-  videoQuality: "auto",
   parseCacheTTL: 300,
   groupBlacklist: [],
   debug: false
@@ -104,14 +116,59 @@ function fakeCtxWith(request) {
 test("链接识别认全 BV / av / 站内链接 / 短链，且不误判别的站", () => {
   assert.equal(containsBilibiliLink("https://www.bilibili.com/video/BV1GJ411x7h7"), true)
   assert.equal(containsBilibiliLink("https://b23.tv/abcdEF"), true)
+  assert.equal(containsBilibiliLink("https://live.bilibili.com/1852636821"), true)
   assert.equal(containsBilibiliLink("看 BV1GJ411x7h7"), true)
   assert.equal(containsBilibiliLink("av12345"), true)
   assert.equal(containsBilibiliLink("https://example.com/video/BVabc"), false)
   assert.equal(extractBvid("https://m.bilibili.com/video/bv1GJ411x7h7"), "BV1GJ411x7h7")
 })
 
-test("从小程序卡片里取出链接", () => {
-  const segments = [
+test("直播链接：直链取房号，短链展开后也能认出来", async () => {
+  assert.equal(extractLiveRoom("https://live.bilibili.com/1852636821?broadcast_type=0"), "1852636821")
+  assert.equal(extractLiveRoom("https://www.bilibili.com/video/BV1GJ411x7h7"), null)
+
+  const app = new BilibiliApp(
+    fakeCtxWith(async url =>
+      String(url).includes("b23.tv")
+        ? { status: 302, headers: { location: "https://live.bilibili.com/1852636821?broadcast_type=0" } }
+        : { status: 200, headers: {} }
+    )
+  )
+  const api = new BilibiliApi(app)
+
+  assert.deepEqual(await api.expandTarget("https://live.bilibili.com/42"), {
+    url: "https://live.bilibili.com/42",
+    liveRoomId: "42"
+  })
+  assert.deepEqual(await api.expandTarget("https://b23.tv/PqRhc5T"), {
+    url: "https://live.bilibili.com/1852636821?broadcast_type=0",
+    liveRoomId: "1852636821"
+  })
+})
+
+test("图文动图：只认图片里的 video 块，普通图文返回 null", () => {
+  const html =
+    ',"video":{"width":720,"height":960,"ratio":"720p","duration":2883,"dataSize":831861,' +
+    '"uri":"v1e00fgi","playAddr":[{"src":"https://v11-weba.douyinvod.com/a.mp4?a=1\\u0026b=2"}]}'
+  assert.equal(parseNoteVideo(html), "https://v11-weba.douyinvod.com/a.mp4?a=1&b=2")
+  assert.equal(parseNoteVideo("<html><img src='a.jpg'></html>"), null)
+})
+
+test("直播页解析：看过、点赞、舰长", () => {
+  const html =
+    '"watched_show":{"switch":true,"num":1594,"text_small":"1594"},' +
+    '"like_info_v3":{"total_likes":1557,"click_block":false},' +
+    '"guard_info":{"count":104,"anchor_guard_achieve_level":100}'
+  assert.deepEqual(parseLivePage(html), { watched: 1594, likes: 1557, guards: 104 })
+  assert.deepEqual(parseLivePage("<html>nothing</html>"), { watched: 0, likes: 0, guards: 0 })
+})
+
+test("直播录制：没有流地址时直接放弃，不会去起 ffmpeg", async () => {
+  const api = new BilibiliApi(new BilibiliApp(fakeCtx()))
+  assert.equal(await api.recordLive({ roomId: "1", title: "", anchor: "", anchorFace: "", cover: "", popularity: 0, attention: 0, area: "", liveTime: "", watched: 0, likes: 0, guards: 0, living: true, streamUrl: "" }, 10), null)
+})
+
+test("从小程序卡片里取出链接", () => {  const segments = [
     {
       type: "json",
       data: JSON.stringify({ app: "com.tencent.miniapp_01", meta: { detail_1: { qqdocurl: "https://b23.tv/xyz" } } })
@@ -163,7 +220,7 @@ function fakeEvent({ forward = true } = {}) {
       sender: { uid: "20000" },
       messageId: "m1",
       group: { gid: "700000", name: "测试群" },
-      bot: { caps: new Set(forward ? ["forward", "reaction"] : []), async setReaction() {} },
+      bot: { platform: "onebot11", caps: new Set(forward ? ["forward", "reaction"] : []), async setReaction() {} },
       async reply(content) {
         sent.push(content)
         return { ok: true, messageId: "x", time: Date.now() }
@@ -172,7 +229,7 @@ function fakeEvent({ forward = true } = {}) {
   }
 }
 
-test("开合并转发时，图片、文字、视频各占一个节点，且不附链接", async () => {
+test("开总开关时，卡片与视频装在同一条转发里", async () => {
   const app = new BilibiliApp(fakeCtx())
   await app.restore()
   const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
@@ -187,6 +244,44 @@ test("开合并转发时，图片、文字、视频各占一个节点，且不�
     ["image", "text", "video"]
   )
   assert.ok(!JSON.stringify(sent[0]).includes("bilibili.com/video"))
+})
+
+test("开总开关时评论图也进同一条转发，不单独再发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+  const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
+
+  const { e, sent } = fakeEvent({ forward: true })
+  await deliver(app, e, info, "/tmp/fake.mp4", { type: "image", data: "comments.png" })
+
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].type, "forward")
+  // 卡片、视频、评论图各一个节点
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "text", "video", "image"]
+  )
+})
+
+test("转发失败时回落直发：卡片与视频各一条，视频不会重复发两遍", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+  const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
+
+  const { e, sent } = fakeEvent({ forward: true })
+  e.reply = async content => {
+    if (content?.type === "forward") throw new Error("send_group_forward_msg 超时")
+    sent.push(content)
+    return { ok: true, messageId: "x", time: Date.now() }
+  }
+
+  assert.equal(await deliver(app, e, info, "/tmp/fake.mp4"), true)
+  assert.equal(sent.length, 2)
+  assert.deepEqual(
+    sent[0].map(segment => segment?.type),
+    ["image", "text"]
+  )
+  assert.equal(sent[1].type, "video")
 })
 
 test("关掉合并转发时，图片与视频分成两条发，同样不附链接", async () => {
@@ -224,6 +319,319 @@ test("视频发送失败时信息卡片仍然算送达", async () => {
   assert.equal(await deliver(app, e, info, "/tmp/fake.mp4"), true)
 })
 
+/** 造一条抖音作品信息；图片一律发（最多 9 张），进不进转发看 douyinImagesAsForward */
+function douyinInfo(over = {}) {
+  return {
+    awemeId: "7412345678901234567",
+    desc: "测试文案",
+    author: { secUid: "SEC-1", name: "作者甲", avatar: "" },
+    cover: "https://p3.douyinpic.com/c.jpg",
+    duration: 45,
+    createTime: 0,
+    music: "",
+    stat: { digg: 1, comment: 2, collect: 3, share: 4 },
+    isImages: false,
+    images: [],
+    playUri: "",
+    shareUrl: "https://www.douyin.com/video/7412345678901234567",
+    ...over
+  }
+}
+
+test("抖音视频作品：开总开关时卡片与视频在同一条转发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  await deliverDouyin(app, e, douyinInfo(), "/tmp/fake.mp4")
+
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].type, "forward")
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "video"]
+  )
+})
+
+test("抖音关总开关：图片和视频仍单独合并转发，卡片直发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  config.cardAsForward = false
+  try {
+    const { e, sent } = fakeEvent({ forward: true })
+    const info = douyinInfo({
+      isImages: true,
+      duration: 0,
+      images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+    })
+    await deliverDouyin(app, e, info, "/tmp/fake.mp4")
+
+    assert.equal(sent.length, 2)
+    // 没渲染器，卡片回落成封面；直发时卡片裹在数组里（好塞 @）
+    assert.deepEqual(
+      sent[0].map(segment => segment?.type),
+      ["image"]
+    )
+    // 图片合并开关独立生效：总开关关着也照样做成一条转发，图片、视频各一个节点
+    assert.equal(sent[1].type, "forward")
+    assert.deepEqual(
+      sent[1].nodes.map(node => node.message[0].type),
+      ["image", "image", "video"]
+    )
+  } finally {
+    config.cardAsForward = true
+  }
+})
+
+test("抖音两个开关都关：卡片、多图、视频逐条直发，一条转发都没有", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  config.cardAsForward = false
+  config.douyinImagesAsForward = false
+  try {
+    const { e, sent } = fakeEvent({ forward: true })
+    const info = douyinInfo({
+      isImages: true,
+      duration: 0,
+      images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+    })
+    await deliverDouyin(app, e, info, "/tmp/fake.mp4")
+
+    assert.equal(sent.length, 3)
+    assert.ok(!sent.some(item => item?.type === "forward"))
+    assert.deepEqual(
+      sent[0].map(segment => segment?.type),
+      ["image"]
+    )
+    assert.deepEqual(
+      sent[1].map(segment => segment?.type),
+      ["image", "image"]
+    )
+    assert.equal(sent[2].type, "video")
+  } finally {
+    config.cardAsForward = true
+    config.douyinImagesAsForward = true
+  }
+})
+
+test("抖音动图两开关都开：一条总转发 = 卡片 → 图文转发（图片+视频）", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, "/tmp/fake.mp4")
+
+  assert.equal(sent.length, 1)
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "raw"]
+  )
+  // 第二个节点自己就是图文转发，内容直接是图片/视频消息，不再多套一层
+  const inner = sent[0].nodes[1].message
+  assert.deepEqual(
+    inner.map(node => node.data.content[0].type),
+    ["image", "image", "video"]
+  )
+  assert.equal(inner[2].data.content[0].data.file?.path ?? inner[2].data.content[0].data.file, "/tmp/fake.mp4")
+})
+
+test("抖音动图两开关都开且有评论：图文转发之外，评论图在总转发末尾", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, "/tmp/fake.mp4", { type: "image", data: "comments.png" })
+
+  assert.equal(sent.length, 1)
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "raw", "image"]
+  )
+  assert.deepEqual(
+    sent[0].nodes[1].message.map(node => node.data.content[0].type),
+    ["image", "image", "video"]
+  )
+})
+
+test("抖音图文两开关都开且没视频：一条总转发 = 卡片 → 图文转发（图片）→ 评论图", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, undefined, { type: "image", data: "comments.png" })
+
+  assert.equal(sent.length, 1)
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "raw", "image"]
+  )
+  assert.deepEqual(
+    sent[0].nodes[1].message.map(node => node.data.content[0].type),
+    ["image", "image"]
+  )
+})
+
+test("嵌套结构被平台拒绝时退回平铺，仍是一条总转发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  let attempts = 0
+  e.reply = async content => {
+    if (content?.type === "forward") {
+      attempts++
+      if (attempts === 1) throw new Error("嵌套结构不支持")
+    }
+    sent.push(content)
+    return { ok: true, messageId: "x", time: Date.now() }
+  }
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, "/tmp/fake.mp4", { type: "image", data: "comments.png" })
+
+  assert.equal(attempts, 2)
+  assert.equal(sent.length, 1)
+  assert.deepEqual(
+    sent[0].nodes.map(node => node.message[0].type),
+    ["image", "image", "image", "video", "image"]
+  )
+})
+
+test("合并转发超时视为已送达，不再逐条补发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  let attempts = 0
+  e.reply = async content => {
+    if (content?.type === "forward") {
+      attempts++
+      throw new Error("调用 send_group_forward_msg 在 15000ms 内未收到响应")
+    }
+    sent.push(content)
+    return { ok: true, messageId: "x", time: Date.now() }
+  }
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, "/tmp/fake.mp4")
+
+  // 只发一条总转发；超时后不再平铺、也不再逐条直发
+  assert.equal(attempts, 1)
+  assert.equal(sent.length, 0)
+})
+
+test("转发被平台拒绝时降级为逐条直发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  const { e, sent } = fakeEvent({ forward: true })
+  e.reply = async content => {
+    if (content?.type === "forward") throw new Error("转发不支持")
+    sent.push(content)
+    return { ok: true, messageId: "x", time: Date.now() }
+  }
+  const info = douyinInfo({
+    isImages: true,
+    duration: 0,
+    images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+  })
+  await deliverDouyin(app, e, info, "/tmp/fake.mp4")
+
+  // 卡片、图片、视频各一条，没有转发
+  assert.equal(sent.length, 3)
+  assert.deepEqual(
+    sent[0].map(segment => segment?.type),
+    ["image"]
+  )
+  assert.deepEqual(
+    sent[1].map(segment => segment?.type),
+    ["image", "image"]
+  )
+  assert.equal(sent[2].type, "video")
+})
+
+test("抖音图片转发开关关掉：图片不进转发，单独发一条多图", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  config.douyinImagesAsForward = false
+  try {
+    const { e, sent } = fakeEvent({ forward: true })
+    const info = douyinInfo({
+      isImages: true,
+      duration: 0,
+      images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+    })
+    await deliverDouyin(app, e, info, undefined, { type: "image", data: "comments.png" })
+
+    // 外层转发只剩卡片与评论图，图片另起一条多图
+    assert.equal(sent.length, 2)
+    assert.equal(sent[0].type, "forward")
+    assert.deepEqual(
+      sent[0].nodes.map(node => node.message[0].type),
+      ["image", "image"]
+    )
+    assert.deepEqual(
+      sent[1].map(segment => segment?.type),
+      ["image", "image"]
+    )
+  } finally {
+    config.douyinImagesAsForward = true
+  }
+})
+
+test("抖音图片转发关掉且没有评论：只剩卡片一个节点，不套转发，图片单独一条", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+
+  config.douyinImagesAsForward = false
+  try {
+    const { e, sent } = fakeEvent({ forward: true })
+    const info = douyinInfo({
+      isImages: true,
+      duration: 0,
+      images: ["https://p3.douyinpic.com/a.jpg", "https://p3.douyinpic.com/b.jpg"]
+    })
+    await deliverDouyin(app, e, info)
+
+    assert.equal(sent.length, 2)
+    assert.ok(!sent.some(item => item?.type === "forward"))
+    assert.deepEqual(
+      sent[0].map(segment => segment?.type),
+      ["image"]
+    )
+    assert.deepEqual(
+      sent[1].map(segment => segment?.type),
+      ["image", "image"]
+    )
+  } finally {
+    config.douyinImagesAsForward = true
+  }
+})
+
 test("没有渲染器时回落为封面 + 文字，而不是报错", async () => {
   const app = new BilibiliApp(fakeCtx())
   await app.restore()
@@ -243,6 +651,33 @@ test("没有渲染器时回落为封面 + 文字，而不是报错", async () =>
   await deliver(app, e, info)
   const types = sent[0].filter(Boolean).map(segment => segment.type)
   assert.deepEqual(types, ["image", "text"])
+})
+
+test("卡片封面按横竖比例自适应：横图限宽、竖图限高", async () => {
+  const landscape = []
+  const portrait = []
+  for (const [bucket, width, height] of [
+    [landscape, 1920, 1080],
+    [portrait, 720, 1280]
+  ]) {
+    const ctx = fakeCtx()
+    ctx.render = async (_name, data) => {
+      bucket.push(data)
+      throw new Error("渲染结果不重要")
+    }
+    const app = new BilibiliApp(ctx)
+    await app.restore()
+    config.renderCard = true
+    try {
+      const { e } = fakeEvent({ forward: false })
+      await deliverDouyin(app, e, douyinInfo({ coverWidth: width, coverHeight: height }))
+    } finally {
+      config.renderCard = false
+    }
+  }
+
+  assert.deepEqual([landscape[0].coverWidth, landscape[0].coverHeight], [320, 180])
+  assert.deepEqual([portrait[0].coverWidth, portrait[0].coverHeight], [203, 360])
 })
 
 test("冷却按群生效，TTL 为 0 时不去重", async () => {
@@ -283,7 +718,7 @@ test("卡片数据与数字格式", async () => {
 // webadapter 由 webui 单独加载，拿不到插件闭包，只能按 Symbol 从 globalThis 取运行时。
 // 这几条钉住三件事：键对得上、二维码转成 dataURL、轮询与登出真的落到了 login 上。
 
-const RUNTIME_KEY = Symbol.for("yunzai-ng.bilibili.runtime")
+const RUNTIME_KEY = Symbol.for("yunzai-ng.video-parse.runtime")
 const { init: initWebAdapter } = await import(new URL("../webadapter/index.js", import.meta.url).href)
 
 /** 造一组接口表：registerApi 的名字 → handler */
@@ -490,7 +925,7 @@ test("跳转地址指向非 B 站域名时拒绝访问", async () => {
   globalThis.fetch = original
   assert.equal(visited.some(url => url.includes("127.0.0.1")), false)
   assert.equal(result.status, 86038)
-  assert.ok(logs.some(line => line.includes("非 B 站域名")))
+  assert.ok(logs.some(line => line.includes("非哔哩哔哩域名")))
   app.dispose()
 })
 
@@ -1015,6 +1450,257 @@ test("点赞门槛把评论全过滤掉时不发图", async () => {
   await sendComments(app, new BilibiliApi(app), e, { aid: 1, owner: { mid: 2 } })
   assert.equal(rendered, 0)
   assert.equal(replies.length, 0)
+})
+
+test("视频档位：画质与体积上限合成一项，不下载/未知值都不下视频", () => {
+  // 每档都自带画质与上限，下游拿到的仍是两个参数
+  assert.deepEqual(resolveVideo("1080p"), { quality: "1080p", maxMB: 250 })
+  assert.deepEqual(resolveVideo("4k"), { quality: "4k", maxMB: 800 })
+  assert.deepEqual(resolveVideo("auto"), { quality: "auto", maxMB: 250 })
+  // 不下载、没配、写错的值都当「不下载」，免得配置写错时突然开始下大文件
+  assert.equal(resolveVideo("off"), null)
+  assert.equal(resolveVideo(undefined), null)
+  assert.equal(resolveVideo("1080P"), null)
+
+  assert.deepEqual(resolveDouyinVideo("720p"), { quality: "720p", maxMB: 200 })
+  assert.equal(resolveDouyinVideo("4k"), null)
+  assert.equal(resolveDouyinVideo("off"), null)
+
+  assert.equal(videoLabel("1080p60"), "1080P60")
+  assert.equal(videoLabel(undefined), "不下载")
+})
+
+test("抖音链接识别：短链、作品页、分享口令、裸 id 都要认，B 站链接不能误判", () => {
+  assert.deepEqual(DouyinApi.extractTarget("https://v.douyin.com/iRNBho6u/"), {
+    kind: "short",
+    value: "https://v.douyin.com/iRNBho6u"
+  })
+  assert.deepEqual(DouyinApi.extractTarget("https://www.douyin.com/video/7675505205047348543"), {
+    kind: "id",
+    value: "7675505205047348543"
+  })
+  // 分享口令：正文里夹着短链
+  const command = "7.43 复制打开抖音，看看【某某的作品】 https://v.douyin.com/abcDEF/ 挺好玩"
+  assert.equal(DouyinApi.extractTarget(command)?.kind, "short")
+  assert.equal(DouyinApi.extractTarget("7675505205047348543")?.value, "7675505205047348543")
+  // B 站链接与普通数字都不能误判
+  assert.equal(DouyinApi.extractTarget("https://www.bilibili.com/video/BV1xx"), null)
+  assert.equal(DouyinApi.extractTarget("今天花了 1234 块钱"), null)
+})
+
+test("抖音短链展开：直播间要认成 live，作品仍认成 aweme", async () => {
+  const app = new BilibiliApp(
+    fakeCtxWith(async url => ({
+      status: 302,
+      headers: {
+        location: String(url).includes("QYOfTf0fCkY")
+          ? "https://webcast.amemv.com/douyin/webcast/reflow/7709358600975665955?from=share"
+          : "https://www.iesdouyin.com/share/video/7675505205047348543/"
+      }
+    }))
+  )
+  const api = new DouyinApi(app)
+
+  assert.deepEqual(await api.resolveShort("https://v.douyin.com/QYOfTf0fCkY"), {
+    kind: "live",
+    roomId: "7709358600975665955",
+    url: "https://webcast.amemv.com/douyin/webcast/reflow/7709358600975665955"
+  })
+  assert.deepEqual(await api.resolveShort("https://v.douyin.com/iRNBho6u"), {
+    kind: "aweme",
+    id: "7675505205047348543"
+  })
+})
+
+test("直播页解析：取主播、标题、开播状态与流地址，页面改版时返回 null", () => {
+  const html =
+    '<div class="living-kRK7Xz">直播中</div>' +
+    '<div class="bottom-username-Z2X5NY">@<!-- -->未婉呀<!-- --> </div>' +
+    '<div class="bottom-title-GnuDoj">颜值直播 &amp; 画画</div>' +
+    '<script>{"stats":{"totalUser":592,"userCountStr":"88","likeCount":0,"followCount":4},"owner":{"followInfo":{"followerCount":345}},"likeCount":768,"createTime":1794974942,"finishTime":1794985027,"roomViewStats":{"displayValue":1023}}</script>' +
+    '<webcast-reflow-player cover="https://p11-webcast.douyinpic.com/cover.jpg?x=1&amp;y=2" url="http://pull-hs-f5.flive.douyincdn.com/stage/stream-1_or4.flv?expire=1&amp;sign=abc"></webcast-reflow-player>'
+  assert.deepEqual(parseLiveInfo(html), {
+    nickname: "未婉呀",
+    title: "颜值直播 & 画画",
+    cover: "https://p11-webcast.douyinpic.com/cover.jpg?x=1&y=2",
+    online: 88,
+    totalViewers: 1023,
+    followers: 345,
+    likes: 768,
+    newFollowers: 4,
+    startedAt: 1794974942,
+    finishedAt: 1794985027,
+    living: true,
+    streamUrl: "http://pull-hs-f5.flive.douyincdn.com/stage/stream-1_or4.flv?expire=1&sign=abc"
+  })
+  assert.equal(parseLiveInfo("<html>nothing</html>"), null)
+})
+
+test("直播录制：没有流地址时直接放弃，不会去起 ffmpeg", async () => {
+  const api = new DouyinApi(new BilibiliApp(fakeCtx()))
+  assert.equal(await api.recordLive({ roomId: "1", nickname: "", title: "", cover: "", online: 0, totalViewers: 0, followers: 0, likes: 0, newFollowers: 0, startedAt: 0, finishedAt: 0, living: true, streamUrl: "" }, 10), null)
+})
+
+test("抖音解析：从分享页的 _ROUTER_DATA 里取作品信息", async () => {
+  const ctx = fakeCtx()
+  const aweme = {
+    aweme_id: "7675505205047348543",
+    desc: "测试文案",
+    create_time: 1763000000,
+    author: { nickname: "作者甲", avatar_thumb: { url_list: ["//p3.douyinpic.com/a.jpg"] } },
+    video: {
+      duration: 1502000,
+      cover: { url_list: ["http://p9.douyinpic.com/c.jpg"] },
+      play_addr: { uri: "v0300fg10000da2dm17og65slqbqs490" }
+    },
+    statistics: { digg_count: 63806, comment_count: 2070, collect_count: 18334, share_count: 5868 },
+    music: { title: "原声" }
+  }
+  // 两种形态都覆盖：这里用 JSON.parse("...") 包一层的那种
+  const html = `<script>window._ROUTER_DATA = JSON.parse(${JSON.stringify(JSON.stringify({ loaderData: { page: { data: aweme } } }))})</script>`
+
+  ctx.http = {
+    async request(url) {
+      if (url.includes("ttwid")) {
+        return { status: 200, headers: { "set-cookie": ["ttwid=abc123; Path=/"] }, data: null }
+      }
+      return { status: 200, headers: {}, data: html }
+    },
+    async download() {
+      throw new Error("不该下载")
+    }
+  }
+
+  const info = await new DouyinApi(new BilibiliApp(ctx)).fetchInfo("7675505205047348543")
+  assert.equal(info?.awemeId, "7675505205047348543")
+  assert.equal(info?.desc, "测试文案")
+  assert.equal(info?.author.name, "作者甲")
+  assert.equal(info?.author.avatar, "https://p3.douyinpic.com/a.jpg")
+  assert.equal(info?.cover, "https://p9.douyinpic.com/c.jpg")
+  assert.equal(info?.duration, 1502)
+  assert.equal(info?.stat.digg, 63806)
+  assert.equal(info?.playUri, "v0300fg10000da2dm17og65slqbqs490")
+  assert.equal(info?.isImages, false)
+})
+
+test("抖音评论：内嵌回复取多条、作者标命中且排最前、楼中楼接口空体不拖慢", async () => {
+  const ctx = fakeCtx()
+  const now = Math.floor(Date.now() / 1000)
+  const comments = [
+    {
+      cid: "111",
+      text: "普通人的评论[看]",
+      digg_count: 5,
+      create_time: now - 120,
+      ip_label: "广东",
+      user: { sec_uid: "SEC-OTHER", nickname: "路人", avatar_thumb: { url_list: ["//p3.douyinpic.com/a.jpg"] } },
+      reply_comment_total: 30,
+      // 主列表里内嵌了 2 条：以前只取第 1 条，现在两条都要
+      reply_comment: [
+        {
+          text: "第一条回复",
+          digg_count: 2,
+          create_time: now - 60,
+          ip_label: "四川",
+          // 直接回复主评论：抖音原版不画箭头
+          reply_to_username: "路人",
+          user: { sec_uid: "SEC-A", nickname: "回复甲" }
+        },
+        {
+          text: "第二条回复",
+          digg_count: 0,
+          create_time: now - 30,
+          ip_label: "北京",
+          // 回复的是楼中楼里的另一个人：带箭头
+          reply_to_username: "回复甲",
+          reply_to_reply_id: "999",
+          user: { sec_uid: "SEC-B", nickname: "回复乙" }
+        }
+      ]
+    },
+    {
+      cid: "222",
+      text: "作者的话",
+      digg_count: 99,
+      create_time: now - 300,
+      ip_label: "浙江",
+      user: { sec_uid: "SEC-AUTHOR", nickname: "作者甲", avatar_thumb: { url_list: ["//p3.douyinpic.com/b.jpg"] } },
+      reply_comment_total: 0
+    }
+  ]
+
+  let replyCalls = 0
+  ctx.http = {
+    async request(url) {
+      if (url.includes("ttwid")) return { status: 200, headers: { "set-cookie": ["ttwid=abc; Path=/"] }, data: null }
+      if (url.includes("emoji/list")) {
+        return { status: 200, headers: {}, data: { emoji_list: [{ display_name: "[看]", emoji_url: { url_list: ["//p3.douyinpic.com/e.png"] } }] } }
+      }
+      if (url.includes("comment/list/reply")) {
+        // 抖音对非登录请求的楼中楼接口就是 200 + 空体
+        replyCalls += 1
+        return { status: 200, headers: {}, data: {} }
+      }
+      if (url.includes("comment/list")) return { status: 200, headers: {}, data: { comments, total: 2 } }
+      return { status: 200, headers: {}, data: {} }
+    },
+    async download() {
+      throw new Error("不该下载")
+    }
+  }
+
+  const data = await new DouyinApi(new BilibiliApp(ctx)).fetchComments("7675505205047348543", 10, "SEC-AUTHOR")
+  assert.equal(data.items.length, 2)
+
+  // 作者本人的评论排最前，并带「作者」标
+  assert.equal(data.items[0].nickname, "作者甲")
+  assert.equal(data.items[0].isAuthor, true)
+  assert.equal(data.items[1].isAuthor, false)
+
+  const plain = data.items[1]
+  // 内嵌回复两条都要
+  assert.equal(plain.replies.length, 2)
+  assert.equal(plain.replies[0].nickname, "回复甲")
+  // 直接回复主评论：不带「▶ 某人」
+  assert.equal(plain.replies[0].replyTo, "")
+  // 回复楼中楼里的另一个人：才带
+  assert.equal(plain.replies[1].replyTo, "回复甲")
+  assert.equal(plain.replies[1].location, "北京")
+  // 回复总数用于「展开 N 条回复」
+  assert.equal(plain.replyTotal, 30)
+  // 表情按标签换成图
+  assert.deepEqual(plain.parts, [{ text: "普通人的评论" }, { emote: { url: "https://p3.douyinpic.com/e.png" } }])
+
+  // 楼中楼接口返回空体后应立刻放弃，不逐条重试
+  assert.equal(replyCalls, 1)
+})
+
+test("填了抖音 Cookie 就带上，换行会被清洗成一行", async () => {
+  const ctx = fakeCtx()
+  const seen = []
+  // 浏览器里复制出来的整段常带换行
+  ctx.config.get = () => ({ ...config, douyinCookie: "sessionid=abc123;\n  uid_tt=xyz;\n odin_tt=q" })
+  ctx.http = {
+    async request(url, options) {
+      seen.push({ url, cookie: options?.headers?.Cookie ?? "" })
+      if (url.includes("ttwid")) return { status: 200, headers: { "set-cookie": ["ttwid=anon; Path=/"] }, data: null }
+      if (url.includes("comment/list")) return { status: 200, headers: {}, data: { comments: [], total: 0 } }
+      return { status: 200, headers: {}, data: {} }
+    },
+    async download() {
+      throw new Error("不该下载")
+    }
+  }
+
+  await new DouyinApi(new BilibiliApp(ctx)).fetchComments("7675505205047348543", 5)
+
+  const comment = seen.find(item => item.url.includes("comment/list"))
+  assert.ok(comment !== undefined)
+  // 一行，没有换行；匿名 ttwid 排在前面垫底
+  assert.ok(!comment.cookie.includes("\n"))
+  assert.match(comment.cookie, /sessionid=abc123/)
+  assert.match(comment.cookie, /uid_tt=xyz/)
+  assert.match(comment.cookie, /^ttwid=anon;/)
 })
 
 test("条数设成 0 时不请求评论，也不发评论图", async () => {

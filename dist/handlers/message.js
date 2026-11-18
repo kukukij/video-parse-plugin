@@ -1,6 +1,8 @@
 import { cleanupFile, containsBilibiliLink, extractLinkFromSegments } from "../services/bilibili.js";
+import { resolveVideo } from "../utils/video.js";
 import { deliver, react } from "./card.js";
-import { sendComments } from "./comments.js";
+import { buildCommentsImage } from "./comments.js";
+import { deliverLive } from "./live.js";
 /** 自动解析的中间件优先级：比默认的 100 靠里，让改写类中间件先跑 */
 const PRIORITY = 200;
 /**
@@ -90,32 +92,82 @@ export async function tryParse(app, api, e) {
  */
 async function runParse(app, api, e, target, gid) {
     const startedAt = Date.now();
+    // 直播间没有 BV 号，`parse` 认不出来；先把短链展开这一次，后面的 `parse` 直接用结果
+    const expanded = await api.expandTarget(target);
+    if (expanded.liveRoomId !== null) {
+        return handleLive(app, api, e, expanded.liveRoomId, gid);
+    }
     await react(e, "10024");
-    const info = await api.parse(target);
+    const info = await api.parse(expanded.url);
     if (info === null) {
         app.debug("链接存在但解析失败，静默跳过");
         return true;
     }
     app.debug(`解析成功 ${info.bvid}，耗时 ${Date.now() - startedAt}ms`);
     let videoFile;
-    if (app.config.sendMode === "with-video") {
-        const file = await api.download(info, app.config.maxVideoSizeMB);
+    // 档位里已经带上了体积上限，选「不下载」时为 null
+    const profile = resolveVideo(app.config.videoMode);
+    if (profile !== null) {
+        const file = await api.download(info, profile.maxMB);
         if (file !== null)
             videoFile = file;
         else
             app.log("warn", `视频未下载，仅发送信息：${info.bvid}`);
     }
-    const sent = await deliver(app, e, info, videoFile);
+    // 评论图先备好：转发开启时它是转发里的一个节点（聊天记录），关闭时 deliver 单独发
+    const commentsImage = await buildCommentsImage(app, api, e, info);
+    const sent = await deliver(app, e, info, videoFile, commentsImage);
     if (sent) {
         await app.markParsed({ bvid: info.bvid, title: info.title, gid, group: e.group?.name });
         app.touchCooldown(gid, info.bvid);
         await react(e, "124");
-        // 第三条消息：评论区。失败不影响前面两条，内部已兜住
-        await sendComments(app, api, e, info);
     }
     if (videoFile !== undefined) {
         // 发送接口返回时文件已被平台读完，但 QQ 侧可能仍在转码；留一分钟再删更稳妥
         app.later(() => void cleanupFile(app, videoFile), 60_000);
     }
+    return true;
+}
+/**
+ * 处理直播间链接
+ *
+ * 直播没有「作品」，先按 `liveRecord` 录一小段，再把直播卡片和片段一起发出去；
+ * 下播的房间只发卡片。不额外发「信息 + 链接」的文字消息。
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @param e 消息事件
+ * @param roomId 直播间号
+ * @param gid 群号（私聊时为 `private:<uid>`）
+ * @returns 恒为 true：直播消息由本插件收掉
+ */
+async function handleLive(app, api, e, roomId, gid) {
+    const key = `live:${roomId}`;
+    if (app.inCooldown(gid, key)) {
+        app.debug(`群 ${gid} 里直播间 ${roomId} 还在冷却中，跳过`);
+        return true;
+    }
+    const startedAt = Date.now();
+    await react(e, "10024");
+    const info = await api.fetchLiveInfo(roomId);
+    if (info === null) {
+        app.debug(`直播间 ${roomId} 信息拉取失败，静默跳过`);
+        return true;
+    }
+    const seconds = Math.max(0, Math.min(60, Number(app.config.liveRecord ?? 0)));
+    let videoFile;
+    if (info.living && seconds > 0) {
+        const file = await api.recordLive(info, seconds);
+        if (file !== null)
+            videoFile = file;
+    }
+    const sent = await deliverLive(app, e, info, "bilibili", videoFile);
+    if (sent) {
+        app.touchCooldown(gid, key);
+        await react(e, "124");
+    }
+    if (videoFile !== undefined) {
+        app.later(() => void cleanupFile(app, videoFile), 60_000);
+    }
+    app.debug(`直播间 ${roomId} 已处理，耗时 ${Date.now() - startedAt}ms`);
     return true;
 }

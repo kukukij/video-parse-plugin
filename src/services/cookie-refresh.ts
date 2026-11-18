@@ -67,7 +67,7 @@ export class CookieKeeper {
       return true
     }
 
-    this.#app.log("info", "检测到 B 站 Cookie 需要续期")
+    this.#app.log("info", "检测到哔哩哔哩 Cookie 需要续期")
 
     const csrf = await this.#refreshCsrf(getCorrespondPath(info.timestamp), credential)
     if (csrf === null) {
@@ -83,7 +83,7 @@ export class CookieKeeper {
     await this.#confirm(refreshed.credential, oldToken)
     await saveCredential(this.#app.ctx, refreshed.credential)
     this.#app.credential = refreshed.credential
-    this.#app.log("info", "B 站 Cookie 续期成功")
+    this.#app.log("info", "哔哩哔哩 Cookie 续期成功")
     await this.#login.refreshUserInfo()
     this.#app.scheduleSnapshot()
     return true

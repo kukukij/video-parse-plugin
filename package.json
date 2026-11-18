@@ -1,7 +1,7 @@
 {
-  "name": "yunzai-plugin-bilibili",
-  "version": "1.2.0",
-  "description": "B 站视频链接解析：自动识别消息中的 B 站链接，出信息卡片、可选下载视频，带扫码登录与按群开关",
+  "name": "video-parse-plugin",
+  "version": "1.3.0",
+  "description": "B站与抖音链接解析插件：自动识别消息里的链接，出信息卡片、可选下载视频与评论图",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -42,6 +42,7 @@
     "@yunzai-ng/core": ">=0.7.0"
   },
   "dependencies": {
+    "abogus": "^2.1.1",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

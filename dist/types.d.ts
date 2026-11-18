@@ -89,6 +89,37 @@ export interface BilibiliApiResponse<T = unknown> {
     /** 业务数据 */
     data: T;
 }
+/** 直播间信息（只用来拼提示、录一小段） */
+export interface BilibiliLiveInfo {
+    /** 直播间号 */
+    roomId: string;
+    /** 直播标题 */
+    title: string;
+    /** 主播昵称 */
+    anchor: string;
+    /** 主播头像 */
+    anchorFace: string;
+    /** 封面 */
+    cover: string;
+    /** 人气值（B 站接口的 online；不是当前在线人数） */
+    popularity: number;
+    /** 主播粉丝数 */
+    attention: number;
+    /** 分区，如「娱乐 · 团播」 */
+    area: string;
+    /** 开播时间，原样保留接口的 `live_time` */
+    liveTime: string;
+    /** 累计看过人数 */
+    watched: number;
+    /** 本场点赞数 */
+    likes: number;
+    /** 舰长数 */
+    guards: number;
+    /** 是否正在直播 */
+    living: boolean;
+    /** 直播流地址（FLV，拿不到时退回 HLS），没有为空串 */
+    streamUrl: string;
+}
 /**
  * B 站登录凭据
  *

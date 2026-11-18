@@ -44,19 +44,23 @@ export declare function splitForForward(segments: Segment[]): {
 /**
  * 发送一条解析结果
  *
- * 两种投递形态，由「合并转发」开关决定，视频都跟着走：
- * 1. 合并转发：封面、卡片/文字、视频各占一个节点，装在一条转发里（群里不刷屏）；
- * 2. 直接发送：先发一条「@ + 卡片/封面」，视频再单独一条 —— 一条普通消息只能带
- *    一个富媒体，图片与视频塞在一起时平台只保留视频。
+ * 两种投递形态，由「合并转发（总开关）」决定：
+ * 1. 合并转发：卡片（或回落时的封面 + 文字）、视频、评论图各占一个节点，装在**同一条**
+ *    转发里。只有一项内容时不套转发 —— 多点一层才看得到内容，不如直发；
+ * 2. 直接发送：卡片（可带 @）、视频、评论图逐条发。一条普通消息只能承载一个富媒体，
+ *    图片与视频必须分开，否则 QQ 只留下视频。
+ *
+ * 平台不支持转发或转发失败时自动回落到直接发送。
  *
  * 都不额外贴链接 —— 卡片或封面已经把信息给全了。
  * @param app 运行期状态
  * @param e 触发解析的消息事件
  * @param info 视频信息
  * @param videoFile 已下载的视频路径，可无
+ * @param commentsImage 已渲染好的评论图，可无
  * @returns 是否至少成功送出一条消息
  */
-export declare function deliver(app: BilibiliApp, e: MessageEvent, info: BilibiliVideoInfo, videoFile?: string): Promise<boolean>;
+export declare function deliver(app: BilibiliApp, e: MessageEvent, info: BilibiliVideoInfo, videoFile?: string, commentsImage?: Segment | null): Promise<boolean>;
 /**
  * 给消息贴一个表情，表示"在处理"
  *

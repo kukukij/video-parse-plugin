@@ -18,6 +18,7 @@ import type { HttpClient, Segment } from "@yunzai-ng/types"
 import type { BilibiliApp } from "../core/app.js"
 import type {
   BilibiliApiResponse,
+  BilibiliLiveInfo,
   BilibiliVideoInfo,
   CommentPart,
   CommentReplyView,
@@ -25,6 +26,8 @@ import type {
   VideoQuality
 } from "../types.js"
 import { formatDate, formatSize } from "../utils/format.js"
+import { recordStream } from "../utils/live.js"
+import { resolveVideo } from "../utils/video.js"
 
 /** 视频信息接口 */
 const VIEW_API = "https://api.bilibili.com/x/web-interface/view"
@@ -37,6 +40,12 @@ const PLAYURL_API = "https://api.bilibili.com/x/player/playurl"
  * 拿不到 10 条热评。`mode=3` 是「热门」，`next=0` 取第一页。
  */
 const REPLY_API = "https://api.bilibili.com/x/v2/reply/main"
+/** 直播间信息接口 */
+const LIVE_INFO_API = "https://api.live.bilibili.com/room/v1/Room/get_info"
+/** 直播间主播昵称接口 */
+const LIVE_ANCHOR_API = "https://api.live.bilibili.com/live_user/v1/UserInfo/get_anchor_in_room"
+/** 直播播放地址接口（web-room v2） */
+const LIVE_PLAY_API = "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo"
 
 /** BV 号 */
 const BV_PATTERN = /\bBV[0-9A-Za-z]{10}\b/i
@@ -46,6 +55,11 @@ const AV_PATTERN = /\bav(\d{1,12})\b/i
 const VIDEO_URL_PATTERN = /https?:\/\/(?:www\.|m\.)?bilibili\.com\/video\/(BV[0-9A-Za-z]{10}|av\d{1,12})/i
 /** 短链 */
 const SHORT_PATTERN = /https?:\/\/(?:b23\.tv|bili2233\.cn)\/[A-Za-z\d._?%&+\-=\/#]+/i
+/** 直播间链接 */
+const LIVE_URL_PATTERN = /https?:\/\/live\.bilibili\.com\/(\d{1,12})/i
+
+/** 直播片段体积上限：10 秒 1080P 一般 2-5MB，留足余量 */
+const LIVE_MAX_MB = 50
 
 /** ffmpeg 失败时写进日志的 stderr 行数：真正的原因通常只在最后一行 */
 const STDERR_TAIL = 5
@@ -167,7 +181,11 @@ interface DashPayload {
  */
 export function containsBilibiliLink(text: string): boolean {
   return (
-    VIDEO_URL_PATTERN.test(text) || SHORT_PATTERN.test(text) || BV_PATTERN.test(text) || AV_PATTERN.test(text)
+    VIDEO_URL_PATTERN.test(text) ||
+    SHORT_PATTERN.test(text) ||
+    LIVE_URL_PATTERN.test(text) ||
+    BV_PATTERN.test(text) ||
+    AV_PATTERN.test(text)
   )
 }
 
@@ -205,6 +223,15 @@ export function extractAvid(text: string): number | null {
  */
 export function extractShortLink(text: string): string | null {
   return text.match(SHORT_PATTERN)?.[0] ?? null
+}
+
+/**
+ * 从文本里取直播间号
+ * @param text 文本
+ * @returns 直播间号；不是直播链接为 null
+ */
+export function extractLiveRoom(text: string): string | null {
+  return text.match(LIVE_URL_PATTERN)?.[1] ?? null
 }
 
 /**
@@ -275,6 +302,55 @@ function findUrlInCard(node: unknown, depth = 0): string | null {
     if (found !== null) return found
   }
   return null
+}
+
+/** 直播间信息接口返回的字段（只声明用到的） */
+interface LiveRoomRaw {
+  room_id?: number
+  title?: string
+  live_status?: number
+  online?: number
+  attention?: number
+  area_name?: string
+  parent_area_name?: string
+  live_time?: string
+  user_cover?: string
+  keyframe?: string
+}
+
+/** 直播播放地址接口返回的字段（只声明用到的） */
+interface LivePlayRaw {
+  playurl_info?: {
+    playurl?: {
+      stream?: Array<{
+        protocol_name?: string
+        format?: Array<{
+          format_name?: string
+          codec?: Array<{
+            codec_name?: string
+            base_url?: string
+            url_info?: Array<{ host?: string; extra?: string }>
+          }>
+        }>
+      }>
+    }
+  }
+}
+
+/**
+ * 从直播间页里取「看过 / 点赞 / 舰长」
+ *
+ * 这几个字段只有房间页的 SSR 数据里有，`get_info` 不带；页面改版取不到就返回 0，
+ * 卡片上对应项会自动隐藏。
+ * @param html 直播间页 HTML
+ * @returns 累计看过、本场点赞、舰长数
+ */
+export function parseLivePage(html: string): { watched: number; likes: number; guards: number } {
+  return {
+    watched: Number(html.match(/"watched_show":\{[^}]*"num":(\d+)/)?.[1] ?? 0),
+    likes: Number(html.match(/"like_info_v3":\{[^}]*"total_likes":(\d+)/)?.[1] ?? 0),
+    guards: Number(html.match(/"guard_info":\{[^}]*"count":(\d+)/)?.[1] ?? 0)
+  }
 }
 
 /**
@@ -404,7 +480,7 @@ export class BilibiliApi {
         retry: 1
       })
       if (res.code !== 0) {
-        this.#app.log("warn", `B 站返回错误：code=${res.code} ${res.message}`)
+        this.#app.log("warn", `哔哩哔哩返回错误：code=${res.code} ${res.message}`)
         return null
       }
       return res.data
@@ -437,6 +513,185 @@ export class BilibiliApi {
       }
     }
     return null
+  }
+
+  /**
+   * 展开分享文本里的目标地址
+   *
+   * 直播间链接没有 BV 号，`parse` 认不出来，先把直播间号挑出来给调用方。短链只
+   * 展开一次，展开后的地址再交给 `parse`，避免同一条短链请求两遍。
+   * @param text 文本
+   * @returns 解析用地址，以及直播间号（不是直播为 null）
+   */
+  async expandTarget(text: string): Promise<{ url: string; liveRoomId: string | null }> {
+    const direct = extractLiveRoom(text)
+    if (direct !== null) return { url: text, liveRoomId: direct }
+
+    const short = extractShortLink(text)
+    if (short !== null) {
+      const real = await this.resolveShortUrl(short)
+      if (real !== null) return { url: real, liveRoomId: extractLiveRoom(real) }
+    }
+    return { url: text, liveRoomId: null }
+  }
+
+  /**
+   * 拉直播间信息
+   * @param roomId 直播间号
+   * @returns 直播间信息；接口报错或网络失败为 null（下播也能返回，`living=false`）
+   */
+  async fetchLiveInfo(roomId: string): Promise<BilibiliLiveInfo | null> {
+    try {
+      const room = await this.http.get<BilibiliApiResponse<LiveRoomRaw>>(`${LIVE_INFO_API}?room_id=${roomId}`, {
+        headers: this.headers(),
+        timeout: "15s",
+        retry: 1
+      })
+      if (room.code !== 0 || room.data === undefined) {
+        this.#app.log("warn", `哔哩哔哩直播返回错误：code=${room.code} ${room.message}`)
+        return null
+      }
+
+      // 昵称与头像在另一个接口里，拿不到就留空，提示里退回「哔哩哔哩主播」
+      const anchor = await this.http
+        .get<BilibiliApiResponse<{ info?: { uname?: string; face?: string } }>>(
+          `${LIVE_ANCHOR_API}?roomid=${roomId}`,
+          {
+            headers: this.headers(),
+            timeout: "15s"
+          }
+        )
+        .catch(() => null)
+
+      const living = room.data.live_status === 1
+      // 分区两级经常重复（比如「娱乐 · 娱乐」），去重后再拼
+      const areas = [room.data.parent_area_name, room.data.area_name].filter(
+        (name): name is string => name !== undefined && name !== ""
+      )
+      const extra = await this.fetchLivePage(roomId)
+      return {
+        roomId,
+        title: room.data.title ?? "",
+        anchor: anchor?.data?.info?.uname ?? "",
+        anchorFace: anchor?.data?.info?.face ?? "",
+        cover: room.data.user_cover ?? room.data.keyframe ?? "",
+        popularity: room.data.online ?? 0,
+        attention: room.data.attention ?? 0,
+        area: areas.filter((name, i) => areas.indexOf(name) === i).join(" · "),
+        liveTime: room.data.live_time ?? "",
+        watched: extra.watched,
+        likes: extra.likes,
+        guards: extra.guards,
+        living,
+        streamUrl: living ? await this.fetchLiveStream(roomId) : ""
+      }
+    } catch (error) {
+      this.#app.log("warn", "拉取直播信息失败", error)
+      return null
+    }
+  }
+
+  /**
+   * 拉直播间页，补「看过 / 点赞 / 舰长」
+   * @param roomId 直播间号
+   * @returns 三个数值；请求失败时全为 0
+   */
+  private async fetchLivePage(roomId: string): Promise<{ watched: number; likes: number; guards: number }> {
+    try {
+      const res = await this.#app.ctx.http.request<string>(`https://live.bilibili.com/${roomId}`, {
+        method: "GET",
+        headers: {
+          ...this.headers(),
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Referer: `https://live.bilibili.com/${roomId}`
+        },
+        responseType: "text",
+        throwOnError: false,
+        timeout: "15s"
+      })
+      return parseLivePage(typeof res.data === "string" ? res.data : "")
+    } catch (error) {
+      this.#app.debug("拉取直播间页失败", error)
+      return { watched: 0, likes: 0, guards: 0 }
+    }
+  }
+
+  /**
+   * 取直播流地址
+   * @param roomId 直播间号
+   * @returns FLV（优先）或 HLS 地址；取不到为空串
+   */
+  private async fetchLiveStream(roomId: string): Promise<string> {
+    const params = new URLSearchParams({
+      room_id: roomId,
+      protocol: "0,1",
+      format: "0,1,2",
+      // codec=0 只要 AVC，HEVC 录下来部分手机放不了
+      codec: "0",
+      qn: "10000",
+      platform: "web",
+      ptype: "8",
+      dolby: "5",
+      panorama: "1"
+    })
+    try {
+      const res = await this.http.get<BilibiliApiResponse<LivePlayRaw>>(`${LIVE_PLAY_API}?${params.toString()}`, {
+        headers: this.headers(),
+        timeout: "15s",
+        retry: 1
+      })
+      if (res.code !== 0) return ""
+      for (const stream of res.data?.playurl_info?.playurl?.stream ?? []) {
+        for (const format of stream.format ?? []) {
+          for (const codec of format.codec ?? []) {
+            const url = `${codec.url_info?.[0]?.host ?? ""}${codec.base_url ?? ""}${codec.url_info?.[0]?.extra ?? ""}`
+            if (url !== "") return url
+          }
+        }
+      }
+      return ""
+    } catch (error) {
+      this.#app.debug("拉取直播流地址失败", error)
+      return ""
+    }
+  }
+
+  /**
+   * 录一小段直播
+   *
+   * 直播是无限流，只截前 N 秒；B 站 CDN 会看 Referer，所以给 ffmpeg 带上。
+   * @param info 直播间信息
+   * @param seconds 录多少秒
+   * @param maxMB 体积上限
+   * @returns 本地 mp4 路径；失败为 null
+   */
+  async recordLive(info: BilibiliLiveInfo, seconds: number, maxMB = LIVE_MAX_MB): Promise<string | null> {
+    if (info.streamUrl === "") {
+      this.#app.log("warn", `哔哩哔哩直播 ${info.roomId} 没有可用的播放地址`)
+      return null
+    }
+
+    const dir = join(this.#app.ctx.app.paths.temp, "bilibili")
+    await mkdir(dir, { recursive: true })
+    const output = join(dir, `bili-live-${info.roomId}-${Date.now()}.mp4`)
+
+    const size = await recordStream({
+      url: info.streamUrl,
+      seconds,
+      output,
+      maxMB,
+      headers: {
+        Referer: `https://live.bilibili.com/${info.roomId}`,
+        "User-Agent": BILI_HEADERS["User-Agent"]!
+      },
+      log: (level, message) => this.#app.log(level, message)
+    })
+    if (size === null) {
+      await rm(output, { force: true })
+      return null
+    }
+    this.#app.log("info", `哔哩哔哩直播已录制：${info.roomId} ${seconds} 秒 ${formatSize(size)}`)
+    return output
   }
 
   /**
@@ -551,9 +806,20 @@ export class BilibiliApi {
    * @returns quality id
    */
   #qualityId(logged: boolean): number {
-    const configured = this.#app.config.videoQuality
+    const configured = this.#expectedQuality()
     if (configured === "auto") return logged ? 116 : 80
     return QUALITY_ID[configured] ?? 80
+  }
+
+  /**
+   * 配置里选中的画质
+   *
+   * 配置文件已经不再有单独的 `videoQuality`：画质与体积上限合成了一个档位，这里从档位
+   * 反解出画质。选「不下载」时不会走到选流，故退回 auto 即可。
+   * @returns 画质
+   */
+  #expectedQuality(): VideoQuality {
+    return resolveVideo(this.#app.config.videoMode)?.quality ?? "auto"
   }
 
   /**
@@ -573,7 +839,7 @@ export class BilibiliApi {
     const pool = playable.length > 0 ? playable : videos
 
     let video: DashVideo | undefined
-    const configured = this.#app.config.videoQuality
+    const configured = this.#expectedQuality()
     if (configured === "auto") {
       video = [...pool].sort((a, b) => b.id - a.id)[0]
     } else {

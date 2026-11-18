@@ -7,10 +7,10 @@
  *            <home>/config            ← 面板给的就是这个
  *            <home>/data/plugin/<名>/ ← 插件的 dataDir
  *
- *          插件名取 `package.json` 里的 `name`（`bilibili`），而目录名可能是
- *          `yunzai-plugin-bilibili`，两者不一定相同，故两个都试一遍再报错。
+ *          插件名取内核给的 `pluginName`（`video-parse`），而目录名是
+ *          `video-parse-plugin`，两者不一定相同，故两个都试一遍再报错。
  *
- *          `login/*` 三条不是只读的：扫码要真调 B 站接口、登出要删凭据文件。它们仍走
+ *          `login/*` 三条不是只读的：扫码要真调哔哩哔哩接口、登出要删凭据文件。它们仍走
  *          `registerApi`，因为 iframe 不透明、拿不到访问令牌，直连插件路由必 401；
  *          面板转发是唯一通道（理由见 init 里那段注释）。
  */
@@ -30,7 +30,7 @@ const SNAPSHOT = "status.json"
  * 这里拿不到插件 setup 里的闭包，故插件把 `{ app, login }` 挂在 globalThis 上，
  * 由这里按 Symbol 取回 —— 两条注册路径因此仍只有一份实例。
  */
-const RUNTIME_KEY = Symbol.for("yunzai-ng.bilibili.runtime")
+const RUNTIME_KEY = Symbol.for("yunzai-ng.video-parse.runtime")
 
 /**
  * 取插件运行时
@@ -47,7 +47,8 @@ function runtime() {
  * @returns {string[]} 候选路径，按可信度排序
  */
 function candidates(ctx) {
-  const names = ["bilibili", ctx.pluginName]
+  // 内核给的 pluginName 正常一定有；万一没给，别让 join(undefined) 抛错把整个页面带挂
+  const names = ["video-parse", ctx.pluginName].filter(name => typeof name === "string" && name !== "")
   const homes = [join(ctx.configDir, "..")]
   if (process.env.YZNG_HOME) homes.push(process.env.YZNG_HOME)
 
@@ -73,7 +74,7 @@ async function readSnapshot(ctx) {
   }
   return {
     missing: true,
-    hint: "还没读到插件写下的状态快照。插件刚装好时先发一条 B 站链接，或重载一次插件。"
+    hint: "还没读到插件写下的状态快照。插件刚装好时先在群里发一条视频链接（哔哩哔哩或抖音），或重载一次插件。"
   }
 }
 
@@ -83,8 +84,8 @@ async function readSnapshot(ctx) {
  */
 export function init(ctx) {
   ctx.registerPage({
-    title: "B站解析",
-    sub: "由插件「bilibili」提供 · 数据只读",
+    title: "视频解析",
+    sub: "由插件「video-parse」提供 · 数据只读",
     // 一台显示器 + 播放键：线条图标，颜色由面板按主题给
     icon: "M3 7h18v11H3zM8 21h8M12 18v3M10 10.5l4 2.5-4 2.5z"
   })
@@ -94,7 +95,7 @@ export function init(ctx) {
   /*
    * 面板转发只认固定路径的 GET，且不许带查询串，所以「点一个群直接拉黑」这种带参数的
    * 写操作走不过这道闸。折中：口令经这条**带鉴权**的转发通道下发，页面再拿它去调插件
-   * 自己的 `/plugin/bilibili/panel/*`（`auth: false` + CORS）。口令每次加载重新生成、
+   * 自己的 `/plugin/video-parse/panel/*`（`auth: false` + CORS）。口令每次加载重新生成、
    * 不落盘，只在内存与页面之间活着。
    */
   ctx.registerApi("panel", () => {
@@ -119,7 +120,7 @@ export function init(ctx) {
 
     const generated = await rt.login.generate()
     if (generated === null) {
-      return { ok: false, error: "B 站没给回二维码（接口风控或网络不通），稍后重试" }
+      return { ok: false, error: "哔哩哔哩没给回二维码（接口风控或网络不通），稍后重试" }
     }
     const png = await rt.login.qrImage(generated.url)
     return {

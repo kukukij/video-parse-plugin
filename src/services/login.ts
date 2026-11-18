@@ -272,7 +272,7 @@ export class BilibiliLogin {
       return null
     }
     if (!/(^|\.)(bilibili\.com|biligame\.com)$/.test(target.hostname)) {
-      this.#app.log("warn", `登录跳转到了非 B 站域名，已忽略：${target.hostname}`)
+      this.#app.log("warn", `登录跳转到了非哔哩哔哩域名，已忽略：${target.hostname}`)
       return null
     }
 
@@ -335,7 +335,7 @@ export class BilibiliLogin {
   async accept(credential: BilibiliCredential): Promise<void> {
     await saveCredential(this.#app.ctx, credential)
     this.#app.credential = credential
-    this.#app.log("info", `B 站登录成功，DedeUserID=${credential.dedeuserid}`)
+    this.#app.log("info", `哔哩哔哩登录成功，DedeUserID=${credential.dedeuserid}`)
     await this.refreshUserInfo()
     this.#app.scheduleSnapshot()
   }
@@ -358,7 +358,7 @@ export class BilibiliLogin {
       })
       if (res.code === -101) {
         // Cookie 已失效：清掉，免得后续每个请求都白跑一趟还带着一个死身份
-        this.#app.log("warn", "B 站凭据已失效，已按未登录处理")
+        this.#app.log("warn", "哔哩哔哩凭据已失效，已按未登录处理")
         await this.forget()
         return null
       }

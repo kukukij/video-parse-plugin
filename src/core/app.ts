@@ -101,13 +101,33 @@ export interface StatusSnapshot {
   /** 关键配置的只读投影 */
   config: {
     enabled: boolean
-    sendMode: string
+    /** 视频下载档位：画质与体积上限已合并成一项 */
+    videoMode: string
     renderCard: boolean
     cardAsForward: boolean
-    maxVideoSizeMB: number
-    videoQuality: string
     parseCacheTTL: number
     parseInPrivate: boolean
+    /** 直播录制时长（秒），0 表示只发直播卡片 */
+    liveRecord: number
+  }
+  /** 抖音侧配置现状：面板按平台分区展示，B 站那几项不再和它混在一起 */
+  douyin: {
+    /** 是否解析抖音链接 */
+    enabled: boolean
+    /** 视频下载档位（画质与体积上限合并） */
+    videoMode: string
+    /** 图文图片是否进总转发（嵌套） */
+    imagesAsForward: boolean
+    /** 图文动图是否取原视频发送 */
+    noteVideo: boolean
+    /** 评论图是否开启 */
+    commentEnabled: boolean
+    /** 评论图条数，0 表示不发 */
+    commentCount: number
+    /** 直播录制时长（秒），0 表示只发直播卡片 */
+    liveRecord: number
+    /** 是否填了登录 Cookie */
+    cookieSet: boolean
   }
   /** 最近解析成功记录，新的在前 */
   recent: RecentParse[]
@@ -389,13 +409,22 @@ export class BilibiliApp {
       whitelistActive: whitelist.length > 0,
       config: {
         enabled: cfg.enabled,
-        sendMode: cfg.sendMode,
+        videoMode: cfg.videoMode,
         renderCard: cfg.renderCard,
         cardAsForward: cfg.cardAsForward,
-        maxVideoSizeMB: cfg.maxVideoSizeMB,
-        videoQuality: cfg.videoQuality,
         parseCacheTTL: cfg.parseCacheTTL,
-        parseInPrivate: cfg.parseInPrivate
+        parseInPrivate: cfg.parseInPrivate,
+        liveRecord: cfg.liveRecord ?? 0
+      },
+      douyin: {
+        enabled: cfg.douyinEnabled === true,
+        videoMode: cfg.douyinVideo ?? "off",
+        imagesAsForward: cfg.douyinImagesAsForward !== false,
+        noteVideo: cfg.douyinNoteVideo === true,
+        commentEnabled: cfg.commentSend !== false,
+        commentCount: cfg.commentCount ?? 0,
+        liveRecord: cfg.douyinLiveRecord ?? 0,
+        cookieSet: String(cfg.douyinCookie ?? "").trim() !== ""
       },
       recent: this.recent,
       cacheSize: this.cooldown.size

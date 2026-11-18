@@ -10,6 +10,7 @@ import type { MessageEvent } from "@yunzai-ng/types"
 import type { BilibiliApp } from "../core/app.js"
 import type { BilibiliLogin } from "../services/login.js"
 import { QrCodeLoginStatus } from "../types.js"
+import { videoLabel } from "../utils/video.js"
 
 /** 扫码轮询间隔（毫秒） */
 const POLL_INTERVAL = 2000
@@ -29,9 +30,9 @@ export function registerCommands(app: BilibiliApp, login: BilibiliLogin): void {
 
   ctx
     .command("#bili登录", {
-      desc: "扫码登录 B 站（私聊，仅主人）",
+      desc: "扫码登录哔哩哔哩（私聊，仅主人）",
       usage: "#bili登录",
-      group: "B站解析",
+      group: "视频解析",
       master: true,
       scene: "private",
       cooldown: "30s",
@@ -43,8 +44,8 @@ export function registerCommands(app: BilibiliApp, login: BilibiliLogin): void {
 
   ctx
     .command("#bili登出", {
-      desc: "退出 B 站登录",
-      group: "B站解析",
+      desc: "退出哔哩哔哩登录",
+      group: "视频解析",
       master: true
     })
     .action(async e => {
@@ -53,11 +54,11 @@ export function registerCommands(app: BilibiliApp, login: BilibiliLogin): void {
         return
       }
       await login.forget()
-      await e.reply("已退出 B 站登录，凭据已删除")
+      await e.reply("已退出哔哩哔哩登录，凭据已删除")
     })
 
   ctx
-    .command("#bili状态", { desc: "查看解析统计与登录状态", group: "B站解析" })
+    .command("#bili状态", { desc: "查看解析统计与登录状态", group: "视频解析" })
     .action(async e => {
       await e.reply(await statusText(app, e))
     })
@@ -72,15 +73,15 @@ export function registerCommands(app: BilibiliApp, login: BilibiliLogin): void {
 async function runLogin(app: BilibiliApp, login: BilibiliLogin, e: MessageEvent): Promise<void> {
   const generated = await login.generate()
   if (generated === null) {
-    await e.reply("向 B 站申请二维码失败，稍后再试")
+    await e.reply("向哔哩哔哩申请二维码失败，稍后再试")
     return
   }
 
   const image = await login.qrImage(generated.url)
   if (image !== null) {
-    await e.reply([seg.image(image), "\n用 B 站手机客户端扫码登录，三分钟内有效"])
+    await e.reply([seg.image(image), "\n用哔哩哔哩手机客户端扫码登录，三分钟内有效"])
   } else {
-    await e.reply([`用 B 站 App 打开这个链接登录（三分钟内有效）：\n${generated.url}`])
+    await e.reply([`用哔哩哔哩 App 打开这个链接登录（三分钟内有效）：\n${generated.url}`])
   }
 
   let scannedNotified = false
@@ -119,9 +120,9 @@ async function statusText(app: BilibiliApp, e: MessageEvent): Promise<string> {
   const config = app.config
   const snapshot = app.snapshot()
   const lines = [
-    "【B站解析】",
-    `开关：${config.enabled ? "开" : "关"} · 模式：${config.sendMode === "with-video" ? "信息 + 视频" : "仅信息"}`,
-    `渲染卡片：${config.renderCard ? "开" : "关"} · 合并转发：${config.cardAsForward ? "开" : "关"}`,
+    "【视频解析】",
+    `开关：${config.enabled ? "开" : "关"} · 视频：${videoLabel(config.videoMode)}`,
+    `渲染卡片：${config.renderCard ? "开" : "关"} · 合并转发：${config.cardAsForward ? "开（卡片/视频/评论图）" : "关"}`,
     `登录：${app.isLoggedIn() ? `${snapshot.login.uname ?? "已登录"}（${snapshot.login.mid ?? "?"}）` : "未登录"}`,
     `累计解析：${snapshot.stats.total} 次 · 今日 ${snapshot.stats.today} 次 · 冷却中 ${snapshot.cacheSize} 条`,
     `已运行：${snapshot.uptime}`

@@ -1,5 +1,5 @@
 /**
- * 模块职责：配置 schema —— 一份声明同时产出校验、`config/bilibili.yaml` 与面板表单
+ * 模块职责：配置 schema —— 一份声明同时产出校验、`config/video-parse.yaml` 与面板表单
  * 依赖方向：依赖 @yunzai-ng/core 的 `s`（schema 工厂）与本地类型
  * 生命周期：模块加载期构造一次，之后不可变
  * 注意事项：**凭据不在这里**。面板的 `GET /api/config/:name` 刻意不脱敏，任何写进
@@ -12,22 +12,27 @@ export declare const configSchema: import("@yunzai-ng/core").Schema<{
     enabled: boolean;
     parseInPrivate: boolean;
     ignorePrefixes: string[];
-    sendMode: "info-only" | "with-video";
     renderCard: boolean;
-    cardAsForward: boolean;
-    atSender: boolean;
-    maxVideoSizeMB: number;
-    videoQuality: "auto" | "4k" | "1080p60" | "1080p" | "720p" | "480p";
+    videoMode: "off" | "auto" | "480p" | "720p" | "1080p" | "1080p60" | "4k";
     parseCacheTTL: number;
+    liveRecord: number;
+    douyinEnabled: boolean;
+    douyinVideo: "off" | "720p" | "1080p" | "540p";
+    douyinImagesAsForward: boolean;
+    douyinNoteVideo: boolean;
+    douyinLiveRecord: number;
+    douyinCookie: string;
     commentSend: boolean;
     commentCount: number;
-    commentSort: "hot" | "time";
     commentReplyCount: number;
     commentMinLike: number;
-    commentShowLevel: boolean;
     commentShowLocation: boolean;
     commentShowEmote: boolean;
+    commentSort: "hot" | "time";
+    commentShowLevel: boolean;
     commentShowPictures: boolean;
+    cardAsForward: boolean;
+    atSender: boolean;
     groupWhitelist: string[];
     groupBlacklist: string[];
     debug: boolean;

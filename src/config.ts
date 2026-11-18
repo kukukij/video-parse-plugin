@@ -1,5 +1,5 @@
 /**
- * 模块职责：配置 schema —— 一份声明同时产出校验、`config/bilibili.yaml` 与面板表单
+ * 模块职责：配置 schema —— 一份声明同时产出校验、`config/video-parse.yaml` 与面板表单
  * 依赖方向：依赖 @yunzai-ng/core 的 `s`（schema 工厂）与本地类型
  * 生命周期：模块加载期构造一次，之后不可变
  * 注意事项：**凭据不在这里**。面板的 `GET /api/config/:name` 刻意不脱敏，任何写进
@@ -14,84 +14,47 @@ export const configSchema = s.object({
     .boolean()
     .default(true)
     .title("总开关")
-    .desc("关掉之后任何消息都不再自动解析")
-    .group("基础"),
+    .desc("关掉后不再自动解析任何链接")
+    .group("哔哩哔哩"),
 
   parseInPrivate: s
     .boolean()
     .default(false)
     .title("私聊也解析")
-    .desc("默认只解析群消息；打开后私聊里的 B 站链接也会出卡片")
-    .group("基础")
+    .desc("默认只解析群聊，打开后私聊也解析")
+    .group("哔哩哔哩")
     .order(10),
 
   ignorePrefixes: s
     .tags()
     .default(["#", "/", "！"])
     .title("跳过的消息前缀")
-    .desc("以这些字符开头的消息不自动解析，留着给命令用")
-    .group("基础")
+    .desc("以此开头的消息不自动解析")
+    .group("哔哩哔哩")
     .order(20),
-
-  sendMode: s
-    .enum(["info-only", "with-video"], {
-      "info-only": "只发信息卡片",
-      "with-video": "信息卡片 + 视频文件"
-    })
-    .default("info-only")
-    .title("发送模式")
-    .desc("下载视频很吃带宽与磁盘，大文件建议只发信息")
-    .group("发送")
-    .order(10),
 
   renderCard: s
     .boolean()
     .default(true)
     .title("渲染卡片图片")
-    .desc("需要装渲染器插件（如 renderer-puppeteer）；渲染失败自动回落为封面 + 文字")
-    .group("发送")
-    .order(20),
+    .desc("需要渲染器插件；失败自动回落为封面 + 文字")
+    .group("哔哩哔哩")
+    .order(25),
 
-  cardAsForward: s
-    .boolean()
-    .default(true)
-    .title("用合并转发发送")
-    .desc("把封面、信息、视频装进一条合并转发，不在群里刷屏。平台不支持时自动改为直接发送")
-    .group("发送")
-    .order(30),
-
-  atSender: s
-    .boolean()
-    .default(false)
-    .title("解析后 @ 发送者")
-    .desc("仅在直接发送（非合并转发）时生效")
-    .group("发送")
-    .order(40),
-
-  maxVideoSizeMB: s
-    .number()
-    .int()
-    .min(1)
-    .max(2000)
-    .default(100)
-    .title("视频大小上限（MB）")
-    .desc("超过这个大小就不下载了。QQ 群视频消息的上限通常在 100MB 上下")
-    .group("视频")
-    .order(20),
-
-  videoQuality: s
-    .enum(["auto", "4k", "1080p60", "1080p", "720p", "480p"], {
-      auto: "自动（登录则最高，未登录 1080P）",
-      "4k": "4K",
-      "1080p60": "1080P 60 帧",
-      "1080p": "1080P",
-      "720p": "720P",
-      "480p": "480P"
+  videoMode: s
+    .enum(["off", "auto", "480p", "720p", "1080p", "1080p60", "4k"], {
+      off: "不下载（只发卡片）",
+      auto: "自动（最高画质，≤250MB）",
+      "480p": "480P（≤50MB）",
+      "720p": "720P（≤120MB）",
+      "1080p": "1080P（≤250MB）",
+      "1080p60": "1080P60（≤400MB）",
+      "4k": "4K（≤800MB）"
     })
-    .default("auto")
-    .title("期望画质")
-    .desc("4K / 1080P60 需要登录；未登录时 B 站只给到 1080P")
-    .group("视频")
+    .default("off")
+    .title("视频下载")
+    .desc("画质与体积上限合并为一档，超出上限只发卡片")
+    .group("哔哩哔哩")
     .order(30),
 
   parseCacheTTL: s
@@ -100,17 +63,85 @@ export const configSchema = s.object({
     .min(0)
     .max(86400)
     .default(300)
-    .title("同群重复解析冷却（秒）")
-    .desc("同一群里同一条视频多久内不再重复解析。0 表示不去重")
-    .group("视频")
+    .title("重复解析冷却（秒）")
+    .desc("同群同视频的间隔，0 = 不去重")
+    .group("哔哩哔哩")
     .order(40),
+
+  liveRecord: s
+    .number()
+    .int()
+    .min(0)
+    .max(60)
+    .default(10)
+    .title("直播录制时长（秒）")
+    .desc("直播链接录这么久再发视频；0 = 只发直播卡片")
+    .group("哔哩哔哩")
+    .order(45),
+
+  douyinEnabled: s
+    .boolean()
+    .default(true)
+    .title("解析抖音链接")
+    .desc("关掉后不响应抖音链接")
+    .group("抖音")
+    .order(10),
+
+  douyinVideo: s
+    .enum(["off", "540p", "720p", "1080p"], {
+      off: "不下载（只发卡片）",
+      "540p": "540P（≤100MB）",
+      "720p": "720P（≤200MB）",
+      "1080p": "1080P（≤400MB）"
+    })
+    .default("off")
+    .title("视频下载")
+    .desc("画质与体积上限合并为一档，超出上限只发卡片")
+    .group("抖音")
+    .order(20),
+
+  douyinImagesAsForward: s
+    .boolean()
+    .default(true)
+    .title("图文图片合并转发")
+    .desc("开：图片做成合并转发（一条消息一张图）；总开关也开时，图片/视频做成总转发里的图文转发")
+    .group("抖音")
+    .order(40),
+
+  douyinNoteVideo: s
+    .boolean()
+    .default(false)
+    .title("图文动图发视频")
+    .desc("用 Cookie 取动图原视频，约 1–2 秒；失败仍发静态图")
+    .group("抖音")
+    .order(42),
+
+  douyinLiveRecord: s
+    .number()
+    .int()
+    .min(0)
+    .max(60)
+    .default(10)
+    .title("直播录制时长（秒）")
+    .desc("直播链接录这么久再发视频；0 = 只发直播卡片")
+    .group("抖音")
+    .order(45),
+
+  douyinCookie: s
+    .string()
+    .default("")
+    .widget("textarea")
+    .title("抖音 Cookie（可选）")
+    .desc("填了能拿楼中楼与更多评论")
+    .group("抖音")
+    .order(50),
 
   commentSend: s
     .boolean()
     .default(true)
     .title("发送评论图")
-    .desc("解析后额外发一张评论区的图。关掉就完全不请求评论，也不发图")
-    .group("评论")
+    .desc("两个平台共用；关掉后完全不请求评论")
+    .group("评论图")
     .order(10),
 
   commentCount: s
@@ -120,17 +151,9 @@ export const configSchema = s.object({
     .max(20)
     .default(10)
     .title("显示条数")
-    .desc("一张图里最多放几条主评论（1-20）。条数越多图越长；填 0 等于不发评论图，和关掉「发送评论图」一个效果")
-    .group("评论")
+    .desc("每张评论图最多几条主评论，0 = 不发")
+    .group("评论图")
     .order(20),
-
-  commentSort: s
-    .enum(["hot", "time"], { hot: "按热度", time: "按时间" })
-    .default("hot")
-    .title("排序方式")
-    .desc("按热度＝B 站默认的「热门评论」；按时间＝最新的在最前面")
-    .group("评论")
-    .order(30),
 
   commentReplyCount: s
     .number()
@@ -139,9 +162,9 @@ export const configSchema = s.object({
     .max(3)
     .default(2)
     .title("楼中楼条数")
-    .desc("每条主评论下带几条回复（0-3）。0 表示只显示主评论")
-    .group("评论")
-    .order(40),
+    .desc("每条评论下带几条回复，0 = 不带")
+    .group("评论图")
+    .order(30),
 
   commentMinLike: s
     .number()
@@ -149,65 +172,89 @@ export const configSchema = s.object({
     .min(0)
     .max(10000)
     .default(0)
-    .title("最低点赞数")
-    .desc("主评论点赞数低于这个值就不显示，用来过滤「第一」「111」这类水评。0 表示不过滤")
-    .group("评论")
-    .order(50),
-
-  commentShowLevel: s
-    .boolean()
-    .default(true)
-    .title("显示等级")
-    .desc("昵称后面的 LV 徽章")
-    .group("评论")
-    .order(60),
+    .title("最低点赞")
+    .desc("低于该点赞数的评论不显示，0 = 不过滤")
+    .group("评论图")
+    .order(40),
 
   commentShowLocation: s
     .boolean()
     .default(true)
     .title("显示 IP 属地")
-    .desc("「广东」这类归属地，需要登录 B 站账号才会返回")
-    .group("评论")
-    .order(70),
+    .desc("两个平台共用")
+    .group("评论图")
+    .order(50),
 
   commentShowEmote: s
     .boolean()
     .default(true)
-    .title("显示表情图")
-    .desc("把 [吃瓜] 这类表情换成 B 站的表情图；关掉就显示成文字标签")
-    .group("评论")
+    .title("显示表情")
+    .desc("两个平台共用，关掉显示文字标签")
+    .group("评论图")
+    .order(60),
+
+  commentSort: s
+    .enum(["hot", "time"], { hot: "按热度", time: "按时间" })
+    .default("hot")
+    .title("排序方式（仅 B 站）")
+    .desc("按热度或按时间")
+    .group("评论图")
+    .order(70),
+
+  commentShowLevel: s
+    .boolean()
+    .default(true)
+    .title("显示等级（仅 B 站）")
+    .desc("昵称后的 LV 徽章")
+    .group("评论图")
     .order(80),
 
   commentShowPictures: s
     .boolean()
     .default(true)
-    .title("显示评论配图")
-    .desc("评论里带的图片，最多 3 张")
-    .group("评论")
+    .title("显示配图与表情包")
+    .desc("B 站配图、抖音照片与大表情，最多 3 张")
+    .group("评论图")
     .order(90),
+
+  cardAsForward: s
+    .boolean()
+    .default(true)
+    .title("合并转发（总开关）")
+    .desc("卡片、视频、评论图（含抖音图片）装进一条转发；关掉则逐条直发")
+    .group("通用 · 发送")
+    .order(10),
+
+  atSender: s
+    .boolean()
+    .default(false)
+    .title("解析后 @ 发送者")
+    .desc("两个平台共用；仅直发生效，合并转发里 @ 不出来")
+    .group("通用 · 发送")
+    .order(20),
 
   groupWhitelist: s
     .tags()
     .default([])
     .title("群白名单")
-    .desc("留空表示所有群都解析；填了群号，就只解析名单内的群。黑名单优先于白名单 —— 两边都填的群按黑名单算")
-    .group("群")
+    .desc("留空 = 全部群；黑名单优先")
+    .group("通用 · 群名单")
     .order(10),
 
   groupBlacklist: s
     .tags()
     .default([])
     .title("群黑名单")
-    .desc("只填群号，填进去的群不自动解析；没填的群按上一条白名单的规则来。面板「B站解析」页里可直接勾选账号已加入的群")
-    .group("群")
+    .desc("这些群不解析")
+    .group("通用 · 群名单")
     .order(20),
 
   debug: s
     .boolean()
     .default(false)
     .title("调试日志")
-    .desc("把每一步解析的细节写进日志，排障时开")
-    .group("高级")
+    .desc("输出解析细节到日志")
+    .group("通用 · 高级")
     .order(10)
 })
 

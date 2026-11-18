@@ -282,13 +282,22 @@ export class BilibiliApp {
             whitelistActive: whitelist.length > 0,
             config: {
                 enabled: cfg.enabled,
-                sendMode: cfg.sendMode,
+                videoMode: cfg.videoMode,
                 renderCard: cfg.renderCard,
                 cardAsForward: cfg.cardAsForward,
-                maxVideoSizeMB: cfg.maxVideoSizeMB,
-                videoQuality: cfg.videoQuality,
                 parseCacheTTL: cfg.parseCacheTTL,
-                parseInPrivate: cfg.parseInPrivate
+                parseInPrivate: cfg.parseInPrivate,
+                liveRecord: cfg.liveRecord ?? 0
+            },
+            douyin: {
+                enabled: cfg.douyinEnabled === true,
+                videoMode: cfg.douyinVideo ?? "off",
+                imagesAsForward: cfg.douyinImagesAsForward !== false,
+                noteVideo: cfg.douyinNoteVideo === true,
+                commentEnabled: cfg.commentSend !== false,
+                commentCount: cfg.commentCount ?? 0,
+                liveRecord: cfg.douyinLiveRecord ?? 0,
+                cookieSet: String(cfg.douyinCookie ?? "").trim() !== ""
             },
             recent: this.recent,
             cacheSize: this.cooldown.size

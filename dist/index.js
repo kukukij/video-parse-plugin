@@ -15,6 +15,7 @@ import { definePlugin } from "@yunzai-ng/core";
 import { configSchema } from "./config.js";
 import { BilibiliApp } from "./core/app.js";
 import { registerCommands } from "./handlers/commands.js";
+import { registerDouyin } from "./handlers/douyin.js";
 import { registerAutoParse } from "./handlers/message.js";
 import { BilibiliApi, containsBilibiliLink } from "./services/bilibili.js";
 import { CookieKeeper } from "./services/cookie-refresh.js";
@@ -35,11 +36,12 @@ const PANEL_CORS = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-st
  * 而扫码登录要做的生成、轮询、登出都不是只读快照能表达的。故把两个实例挂到 globalThis，
  * 用 `Symbol.for` 取键：同一个进程里，插件目录被改名或挂载成不同路径也仍然是同一个键。
  */
-const RUNTIME_KEY = Symbol.for("yunzai-ng.bilibili.runtime");
+const RUNTIME_KEY = Symbol.for("yunzai-ng.video-parse.runtime");
 export default definePlugin({
     // 省了 version / description / author，内核从 package.json 补齐；显式写 name 是为了
-    // 让配置文件名、URL 前缀、KV 命名空间都有一个短而稳的标识，不随仓库改名而变
-    name: "bilibili",
+    // 让配置文件名、URL 前缀、KV 命名空间都有一个短而稳的标识，不随仓库改名而变。
+    // 同时解析 B 站与抖音，故用中性名，不再用单个平台名。
+    name: "video-parse",
     configSchema,
     async setup(ctx) {
         const app = new BilibiliApp(ctx);
@@ -55,6 +57,7 @@ export default definePlugin({
         await app.writeSnapshot();
         // 自动解析：中间件而非命令，见 handlers/message.ts 文件头
         registerAutoParse(app, api);
+        registerDouyin(app);
         registerCommands(app, login);
         // 面板页面在 iframe 里，拿不到令牌，故它读的是 status.json 快照（见 webadapter/）。
         // 这里的接口是给**带令牌**的外部调用方（脚本、接口调试）用的
@@ -152,7 +155,7 @@ export default definePlugin({
             if (!app.isLoggedIn())
                 return;
             await keeper.refresh().catch((error) => app.log("warn", "Cookie 续期任务异常", error));
-        }, { name: "B站 Cookie 续期", overlap: "skip", timeout: "2m" });
+        }, { name: "哔哩哔哩 Cookie 续期", overlap: "skip", timeout: "2m" });
         app.log("info", `已加载，解析开关=${app.config.enabled ? "开" : "关"}`);
         // 定时器、冷却表不归 ctx 管，必须自己收；globalThis 上那份也要摘掉，
         // 否则热重载后面板页会拿到一个已经被 dispose 的旧实例

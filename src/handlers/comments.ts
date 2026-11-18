@@ -17,9 +17,10 @@ const TEMPLATE = "comment-card"
 const PICTURE_LIMIT = 3
 
 /**
- * 取评论、渲染成图并发送
+ * 取评论、渲染成图并**发送**
  *
- * 顺序上它是第三条消息（第一条卡片、第二条视频），由 `runParse` 在投递之后调用。
+ * 单独发送的路径（转发关闭时的兜底）。转发开启时由 `runParse` 走 `buildCommentsImage`
+ * 把图塞进转发节点，不再走这里。
  * @param app 运行期状态
  * @param api B 站接口
  * @param e 触发解析的消息事件
@@ -31,11 +32,39 @@ export async function sendComments(
   e: MessageEvent,
   info: BilibiliVideoInfo
 ): Promise<void> {
+  const image = await buildCommentsImage(app, api, e, info)
+  if (image === null) return
+
+  try {
+    await e.reply(image)
+  } catch (error) {
+    // 卡片和视频已经送到了，评论图发不出去不该让整条解析算失败
+    app.log("warn", "评论图发送失败", error)
+  }
+}
+
+/**
+ * 取评论并渲染成图，**不发送**
+ *
+ * 转发开启时这张图作为转发里的一个节点（聊天记录），关闭时走 `sendComments` 单独发。
+ * 所有失败路径都返回 null，静默跳过。
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @param e 触发解析的消息事件
+ * @param info 视频信息
+ * @returns 评论图段；关闭、取不到或渲染失败为 null
+ */
+export async function buildCommentsImage(
+  app: BilibiliApp,
+  api: BilibiliApi,
+  e: MessageEvent,
+  info: BilibiliVideoInfo
+): Promise<Segment | null> {
   const config = app.config
-  if (config.commentSend === false) return
+  if (config.commentSend === false) return null
 
   const limit = config.commentCount ?? 0
-  if (limit <= 0) return
+  if (limit <= 0) return null
 
   const minLike = config.commentMinLike ?? 0
   // 要按点赞过滤时多取一些：过滤完可能不够 limit 条，再补请求不如一次多要
@@ -46,27 +75,19 @@ export async function sendComments(
     replyLimit: config.commentReplyCount ?? 2,
     emote: config.commentShowEmote !== false
   })
-  if (data === null) return
+  if (data === null) return null
   if (data.items.length === 0) {
     app.debug("这条视频还没有评论，跳过评论图")
-    return
+    return null
   }
 
   const items = data.items.filter(item => item.like >= minLike).slice(0, limit)
   if (items.length === 0) {
     app.debug(`评论点赞数都低于 ${minLike}，跳过评论图`)
-    return
+    return null
   }
 
-  const image = await renderComments(app, data.total, items)
-  if (image === null) return
-
-  try {
-    await e.reply(image)
-  } catch (error) {
-    // 卡片和视频已经送到了，评论图发不出去不该让整条解析算失败
-    app.log("warn", "评论图发送失败", error)
-  }
+  return renderComments(app, data.total, items)
 }
 
 /**

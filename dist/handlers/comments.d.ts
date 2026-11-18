@@ -10,15 +10,28 @@ import type { BilibiliApp } from "../core/app.js";
 import type { BilibiliApi } from "../services/bilibili.js";
 import type { BilibiliVideoInfo, CommentView } from "../types.js";
 /**
- * 取评论、渲染成图并发送
+ * 取评论、渲染成图并**发送**
  *
- * 顺序上它是第三条消息（第一条卡片、第二条视频），由 `runParse` 在投递之后调用。
+ * 单独发送的路径（转发关闭时的兜底）。转发开启时由 `runParse` 走 `buildCommentsImage`
+ * 把图塞进转发节点，不再走这里。
  * @param app 运行期状态
  * @param api B 站接口
  * @param e 触发解析的消息事件
  * @param info 视频信息
  */
 export declare function sendComments(app: BilibiliApp, api: BilibiliApi, e: MessageEvent, info: BilibiliVideoInfo): Promise<void>;
+/**
+ * 取评论并渲染成图，**不发送**
+ *
+ * 转发开启时这张图作为转发里的一个节点（聊天记录），关闭时走 `sendComments` 单独发。
+ * 所有失败路径都返回 null，静默跳过。
+ * @param app 运行期状态
+ * @param api B 站接口
+ * @param e 触发解析的消息事件
+ * @param info 视频信息
+ * @returns 评论图段；关闭、取不到或渲染失败为 null
+ */
+export declare function buildCommentsImage(app: BilibiliApp, api: BilibiliApi, e: MessageEvent, info: BilibiliVideoInfo): Promise<Segment | null>;
 /**
  * 渲染评论图
  * @param app 运行期状态

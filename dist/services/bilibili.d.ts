@@ -1,6 +1,6 @@
 import type { HttpClient, Segment } from "@yunzai-ng/types";
 import type { BilibiliApp } from "../core/app.js";
-import type { BilibiliVideoInfo, CommentView } from "../types.js";
+import type { BilibiliLiveInfo, BilibiliVideoInfo, CommentView } from "../types.js";
 /** DASH 中的一路视频流 */
 interface DashVideo {
     /** 画质 id */
@@ -73,6 +73,12 @@ export declare function extractAvid(text: string): number | null;
  */
 export declare function extractShortLink(text: string): string | null;
 /**
+ * 从文本里取直播间号
+ * @param text 文本
+ * @returns 直播间号；不是直播链接为 null
+ */
+export declare function extractLiveRoom(text: string): string | null;
+/**
  * 从小程序 / 图文卡片里把 B 站链接掏出来
  *
  * QQ 分享 B 站视频时，正文里往往没有链接，只有一个 `json` 段。旧实现只认
@@ -82,6 +88,19 @@ export declare function extractShortLink(text: string): string | null;
  * @returns 链接，取不到为 null
  */
 export declare function extractLinkFromSegments(segments: readonly Segment[]): string | null;
+/**
+ * 从直播间页里取「看过 / 点赞 / 舰长」
+ *
+ * 这几个字段只有房间页的 SSR 数据里有，`get_info` 不带；页面改版取不到就返回 0，
+ * 卡片上对应项会自动隐藏。
+ * @param html 直播间页 HTML
+ * @returns 累计看过、本场点赞、舰长数
+ */
+export declare function parseLivePage(html: string): {
+    watched: number;
+    likes: number;
+    guards: number;
+};
 /**
  * B 站接口封装
  *
@@ -138,6 +157,46 @@ export declare class BilibiliApi {
      * @returns 视频信息，解析不出为 null
      */
     parse(text: string): Promise<BilibiliVideoInfo | null>;
+    /**
+     * 展开分享文本里的目标地址
+     *
+     * 直播间链接没有 BV 号，`parse` 认不出来，先把直播间号挑出来给调用方。短链只
+     * 展开一次，展开后的地址再交给 `parse`，避免同一条短链请求两遍。
+     * @param text 文本
+     * @returns 解析用地址，以及直播间号（不是直播为 null）
+     */
+    expandTarget(text: string): Promise<{
+        url: string;
+        liveRoomId: string | null;
+    }>;
+    /**
+     * 拉直播间信息
+     * @param roomId 直播间号
+     * @returns 直播间信息；接口报错或网络失败为 null（下播也能返回，`living=false`）
+     */
+    fetchLiveInfo(roomId: string): Promise<BilibiliLiveInfo | null>;
+    /**
+     * 拉直播间页，补「看过 / 点赞 / 舰长」
+     * @param roomId 直播间号
+     * @returns 三个数值；请求失败时全为 0
+     */
+    private fetchLivePage;
+    /**
+     * 取直播流地址
+     * @param roomId 直播间号
+     * @returns FLV（优先）或 HLS 地址；取不到为空串
+     */
+    private fetchLiveStream;
+    /**
+     * 录一小段直播
+     *
+     * 直播是无限流，只截前 N 秒；B 站 CDN 会看 Referer，所以给 ffmpeg 带上。
+     * @param info 直播间信息
+     * @param seconds 录多少秒
+     * @param maxMB 体积上限
+     * @returns 本地 mp4 路径；失败为 null
+     */
+    recordLive(info: BilibiliLiveInfo, seconds: number, maxMB?: number): Promise<string | null>;
     /**
      * 拉取 DASH 播放地址
      * @param query BV 号、cid

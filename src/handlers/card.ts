@@ -120,61 +120,79 @@ export function splitForForward(segments: Segment[]): { cover?: Segment[]; text?
 /**
  * 发送一条解析结果
  *
- * 两种投递形态，由「合并转发」开关决定，视频都跟着走：
- * 1. 合并转发：封面、卡片/文字、视频各占一个节点，装在一条转发里（群里不刷屏）；
- * 2. 直接发送：先发一条「@ + 卡片/封面」，视频再单独一条 —— 一条普通消息只能带
- *    一个富媒体，图片与视频塞在一起时平台只保留视频。
+ * 两种投递形态，由「合并转发（总开关）」决定：
+ * 1. 合并转发：卡片（或回落时的封面 + 文字）、视频、评论图各占一个节点，装在**同一条**
+ *    转发里。只有一项内容时不套转发 —— 多点一层才看得到内容，不如直发；
+ * 2. 直接发送：卡片（可带 @）、视频、评论图逐条发。一条普通消息只能承载一个富媒体，
+ *    图片与视频必须分开，否则 QQ 只留下视频。
+ *
+ * 平台不支持转发或转发失败时自动回落到直接发送。
  *
  * 都不额外贴链接 —— 卡片或封面已经把信息给全了。
  * @param app 运行期状态
  * @param e 触发解析的消息事件
  * @param info 视频信息
  * @param videoFile 已下载的视频路径，可无
+ * @param commentsImage 已渲染好的评论图，可无
  * @returns 是否至少成功送出一条消息
  */
 export async function deliver(
   app: BilibiliApp,
   e: MessageEvent,
   info: BilibiliVideoInfo,
-  videoFile?: string
+  videoFile?: string,
+  commentsImage?: Segment | null
 ): Promise<boolean> {
   const config = app.config
   const infoSegments = await buildInfoSegments(app, info)
-
   const canForward = e.isGroup && config.cardAsForward && e.bot.caps.has("forward")
+  let forwarded = false
+
   if (canForward) {
     const split = splitForForward(infoSegments)
     const nodes: ForwardNode[] = []
-    if (split.cover !== undefined) nodes.push(seg.node(split.cover, { name: "B站解析", uid: e.selfId }))
-    if (split.text !== undefined) nodes.push(seg.node(split.text, { name: "B站解析", uid: e.selfId }))
+    if (split.cover !== undefined) nodes.push(seg.node(split.cover, { name: "视频解析", uid: e.selfId }))
+    if (split.text !== undefined) nodes.push(seg.node(split.text, { name: "视频解析", uid: e.selfId }))
+    if (videoFile !== undefined) nodes.push(seg.node([seg.video(videoFile)], { name: "视频解析", uid: e.selfId }))
+    if (commentsImage !== undefined && commentsImage !== null) {
+      nodes.push(seg.node([commentsImage], { name: "视频解析", uid: e.selfId }))
+    }
+    // 只有一个节点的转发要多点一层才看得到内容，还不如直发一张卡片
+    if (nodes.length > 1) {
+      try {
+        await e.reply(seg.forward(nodes, { summary: `视频：${info.title}`.slice(0, 48) }))
+        forwarded = true
+      } catch (error) {
+        app.log("warn", "合并转发发送失败，改为直接发送", error)
+      }
+    }
+  }
+
+  if (!forwarded) {
+    const at = config.atSender ? [seg.at(e.sender.uid), seg.text(" ")] : []
+    try {
+      await e.reply([...at, ...infoSegments])
+    } catch (error) {
+      app.log("error", "发送解析结果失败", error)
+      return false
+    }
+
     if (videoFile !== undefined) {
-      nodes.push(seg.node([seg.video(videoFile)], { name: "B站解析", uid: e.selfId }))
+      try {
+        await e.reply(seg.video(videoFile))
+      } catch (error) {
+        // 信息卡片已经送到了，视频失败不该把整条解析判成失败
+        app.log("warn", "视频发送失败，只留信息卡片", error)
+      }
     }
-    try {
-      await e.reply(seg.forward(nodes, { summary: `B站视频：${info.title}`.slice(0, 48) }))
-      return true
-    } catch (error) {
-      app.log("warn", "合并转发发送失败，改为直接发送", error)
-    }
-  }
 
-  // **图片与视频必须分两条发。** 一条消息只能承载一个富媒体：塞在同一条里时，
-  // QQ 只留下视频，图片和 @ 一起消失（实测适配器报的是 at×1 text×1 image×1 video×1，
-  // 群里却只剩视频）。所以先发 "@ + 卡片/封面"，视频单独一条。
-  const at = config.atSender ? [seg.at(e.sender.uid), seg.text(" ")] : []
-  try {
-    await e.reply([...at, ...infoSegments])
-  } catch (error) {
-    app.log("error", "发送解析结果失败", error)
-    return false
-  }
-
-  if (videoFile !== undefined) {
-    try {
-      await e.reply(seg.video(videoFile))
-    } catch (error) {
-      // 信息卡片已经送到了，视频失败不该把整条解析判成失败
-      app.log("warn", "视频发送失败，只留信息卡片", error)
+    // 没进转发（没开开关、平台不支持、转发失败）时评论图单独发一条
+    if (commentsImage !== undefined && commentsImage !== null) {
+      try {
+        await e.reply(commentsImage)
+      } catch (error) {
+        app.log("warn", "评论图发送失败", error)
+      }
     }
   }
   return true
