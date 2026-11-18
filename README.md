@@ -1,85 +1,111 @@
 # video-parse-plugin
 
-[Yunzai NG](https://github.com/Yunzai-NG/yunzai-ng) 的 B 站链接解析插件：群里贴 B 站链接，回一张视频卡片，
-想连视频一起发也行。
+> 群里有人贴 B 站 / 抖音链接，自动出信息卡片、可选下载视频与评论图；直播间出直播卡片，还能录一小段。
 
-<p align="center">
-  <img src="docs/preview-card.png" width="210" alt="视频卡片" />
-  &nbsp;&nbsp;
-  <img src="docs/preview-login.png" width="330" alt="网页扫码登录" />
-  &nbsp;&nbsp;
-  <img src="docs/preview-panel.png" width="480" alt="面板看板" />
-</p>
+![version](https://img.shields.io/badge/version-1.3.0-ff6699)
+![node](https://img.shields.io/badge/node-%3E%3D20.11-339933)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
-## 功能
+## 预览
 
-- **认得**：站内链接、`b23.tv` / `bili2233.cn` 短链、裸 `BV` / `av` 号、QQ 分享的小程序卡片
-- **直播**：`live.bilibili.com` 与直播短链都能认；出直播卡片（封面、主播、标题、分区、人气、看过、点赞、关注、舰长、开播时长），并按配置录一小段发视频
-- **卡片**：封面、标题、UP 主、分区、时长、发布日期，播放 / 弹幕 / 点赞 / 投币 / 收藏 / 分享
-- **视频**：可选下载，优先 H.264 + AAC，发出去能直接播
-- **评论图**：按 B 站评论区原样渲染，条数、排序（热度/时间）、楼中楼条数都能配
-- **登录**：网页扫码，登录后支持 1080P60 与 4K，凭据自动续期
-- **群白名单 / 黑名单**：只填群号，面板里点选即可；只影响本插件，不拦别的插件
-- **抖音**：链接、短链、整段分享口令都能认；出卡片、可选下无水印视频、可发评论图；图文按需合并转发，动图作品可连同原视频一起发；封面按横竖比例自适应，直播链接出直播卡片（在线、看过、粉丝、点赞、涨粉、开播时长），并按配置录一小段发视频
+| 哔哩哔哩视频卡片 | 抖音图文卡片 |
+| --- | --- |
+| ![B 站视频卡片](docs/preview-card.png) | ![抖音图文卡片](docs/preview-douyin-card.png) |
+| **哔哩哔哩直播卡片** | **抖音直播卡片** |
+| ![B 站直播卡片](docs/preview-bili-live.png) | ![抖音直播卡片](docs/preview-douyin-live.png) |
+
+## 支持范围
+
+| 平台 | 链接形式 | 发什么 |
+| --- | --- | --- |
+| 哔哩哔哩 | `BV` 号、`av` 号、`b23.tv` 短链、`bilibili.com` 视频页 | 卡片、可选视频文件、评论图 |
+| 哔哩哔哩直播 | `live.bilibili.com/房间号`、`b23.tv` 直播短链 | 直播卡片、可选录制片段 |
+| 抖音 | `v.douyin.com` 短链、作品页、整段分享口令 | 卡片、可选无水印视频、评论图 |
+| 抖音图文 | 图文作品、动图作品 | 卡片、图片合并转发、动图作品可发原视频、评论图 |
+| 抖音直播 | `live.douyin.com/房间号`、直播短链 | 直播卡片、可选录制片段 |
+
+- 同一个群里重复贴同一个作品，冷却时间内只解析一次（可关）。
+- 支持群白名单 / 黑名单、私聊开关、消息前缀跳过。
+- 卡片、视频、图片、评论图可以合成一条聊天记录（合并转发），也可以逐条直发。
+
+## 工作流程
+
+1. 消息进来，先判断开关、场景、群名单、前缀，再看有没有链接（纯内存判断，不碰网络）。
+2. 命中后在消息上回一个「解析中」表情，然后请求平台接口。
+3. 渲染卡片；需要的话下载视频、生成评论图。
+4. 按配置投递：合并转发或逐条直发，完成后回一个「完成」表情。
 
 ## 安装
 
 ```bash
-cd <主目录>/plugins
-git clone https://github.com/kukukij/video-parse-plugin
-cd video-parse-plugin && npm install --omit=dev
+# 1. 放进插件目录
+git clone <repo> /path/to/yunzai/plugins/video-parse-plugin
+cd /path/to/yunzai/plugins/video-parse-plugin
+
+# 2. 装依赖并构建
+npm install
+npm run build
 ```
 
-想要带声音的视频，再装 ffmpeg（按系统挑一行）：
-
-```bash
-sudo apt install -y ffmpeg        # Debian / Ubuntu
-brew install ffmpeg               # macOS
-```
-
-其他系统（dnf / pacman / apk / winget / Termux）见 [USAGE.md](USAGE.md#装-ffmpeg)。
-
-可选：装 [renderer-puppeteer](https://github.com/Yunzai-NG/renderer-puppeteer) 出卡片图，不装回落成
-「封面 + 文字」。
-
-装完重启一次，看到 `config/video-parse.yaml` 生成、面板「扩展页面」多一项「视频解析」就对了。
+- 需要 Node.js ≥ 20.11。
+- 卡片渲染依赖渲染器插件（如 `renderer-puppeteer`）；没有渲染器时自动回落为「封面图 + 文字」。
+- 哔哩哔哩登录：私聊机器人发 `#bili登录`，或面板里扫码；登录后能拿到更高画质与完整评论。
 
 ## 配置
 
-面板「插件 → video-parse → 配置」里改，或直接编辑 `config/video-parse.yaml`，**改完即时生效，不用重启**。
+配置写在 `config/video-parse.yaml`，也可以直接在面板里改。常用项：
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| `enabled` | `true` | 总开关 |
-| `videoMode` | `off` | 视频下载档位：`off` / `auto` / `480p` / `720p` / `1080p` / `1080p60` / `4k`，每档自带体积上限 |
-| `parseInPrivate` | `false` | 私聊也解析 |
-| `liveRecord` | `10` | 哔哩哔哩直播录制时长（秒，0-60），`0` 只发直播卡片；录制走 ffmpeg，不转码 |
-| `cardAsForward` | `true` | **合并转发总开关**，哔哩哔哩与抖音共用：开着把卡片、视频、图文图片、评论图全部装进同一条转发，关掉逐条直发。转发失败自动回落直发 |
-| `commentSend` | `true` | 是否发评论图，两个平台共用 |
-| `commentCount` | `10` | 图里放几条主评论（1-20），两个平台共用 |
-| `commentSort` | `hot` | `hot` 按热度 / `time` 按时间（仅 B 站） |
-| `commentReplyCount` | `2` | 每条评论下带几条回复（0-3），两个平台共用 |
-| `commentMinLike` | `0` | 点赞低于此值不显示，0 不过滤，两个平台共用 |
-| `commentShowLocation` | `true` | 显示 IP 属地，两个平台共用 |
-| `commentShowEmote` | `true` | 显示表情图，两个平台共用 |
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 总开关，关掉后不解析任何链接 |
+| `renderCard` | `true` | 渲染卡片图片，失败回落封面 + 文字 |
+| `videoMode` | `off` | 哔哩哔哩视频下载档位（画质 + 体积上限） |
 | `douyinEnabled` | `true` | 是否解析抖音链接 |
-| `douyinVideo` | `off` | 抖音下载档位：`540p` / `720p` / `1080p` / `off` |
-| `douyinImagesAsForward` | `true` | 抖音图文图片（最多 9 张）是否做成合并转发（一条消息一张）；总开关也开时，图片/视频做成总转发里的图文转发，总开关关着时单独一条转发 |
-| `douyinNoteVideo` | `false` | 图文动图是否取原视频发送；用抖音 Cookie 取作品页，约慢 1–2 秒 |
-| `douyinLiveRecord` | `10` | 直播录制时长（秒，0-60），`0` 只发直播卡片；录制走 ffmpeg，不转码 |
-| `douyinCookie` | 空 | 抖音登录 Cookie（可选）。实测填不填评论数据一样，主要作用是更抗风控 |
-| `parseCacheTTL` | `300` | 同群同视频多少秒内不重复解析，`0` 为不去重 |
-| `groupWhitelist` | `[]` | 群白名单，只填群号；留空＝不限群 |
-| `groupBlacklist` | `[]` | 群黑名单，只填群号 |
+| `douyinVideo` | `off` | 抖音视频下载档位 |
+| `douyinImagesAsForward` | `true` | 抖音图片合并转发（一条消息一张） |
+| `douyinNoteVideo` | `false` | 动图作品用 Cookie 取原视频一起发 |
+| `douyinCookie` | 空 | 抖音 Cookie，填了评论更全、能取动图视频 |
+| `commentSend` | `true` | 是否发评论图（两平台共用） |
+| `cardAsForward` | `true` | 合并转发总开关 |
+| `liveRecord` / `douyinLiveRecord` | `10` | 直播录制秒数，`0` = 只发卡片 |
 
-其余配置项见 [USAGE.md](USAGE.md#配置)。
+完整说明见 [USAGE.md](USAGE.md)。
 
-## 使用
+## 命令
 
-**见 [USAGE.md](USAGE.md)**：扫码登录、命令、自动解析规则、群名单、常见问题。
+| 命令 | 场景 | 说明 |
+| --- | --- | --- |
+| `#bili登录` | 私聊、仅主人 | 扫码登录哔哩哔哩 |
+| `#bili登出` | 仅主人 | 退出登录并删除凭据 |
+| `#bili状态` | 任意 | 查看解析统计与登录状态 |
+
+解析本身不需要命令，贴链接就会自动处理。
+
+## 面板
+
+插件自带一个面板扩展页（`webadapter/index.html`），展示解析统计、登录状态、抖音设置、群名单与最近解析记录，支持直接拉黑/放行群、扫码登录。
+
+## 开发
+
+```bash
+npm run build     # 编译 src -> dist
+npm run typecheck # 只做类型检查
+npm test          # 单元测试（node --test）
+```
+
+## 目录
+
+```
+src/
+  handlers/     消息中间件、命令、卡片、评论图、直播投递
+  services/     哔哩哔哩 / 抖音接口、登录、Cookie 续期
+  utils/        格式化、视频档位、ffmpeg 录制
+  types/        数据结构
+templates/      卡片 HTML（哔哩哔哩 / 抖音 / 评论 / 直播）
+webadapter/     面板扩展页
+test/           单元测试
+```
 
 ## 许可
 
-MIT。
-
-本插件借鉴自 [napcat-plugin-bilibili](https://github.com/AQiaoYo/napcat-plugin-bilibili)。
+MIT
