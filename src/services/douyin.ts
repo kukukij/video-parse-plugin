@@ -17,6 +17,7 @@ import { createWriteStream } from "node:fs"
 import { mkdir, rename, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import type { BilibiliApp } from "../core/app.js"
+import { nonceOf, solveAcChallenge } from "./douyin-ac.js"
 import type {
   DouyinCommentImage,
   DouyinCommentItem,
@@ -37,6 +38,8 @@ import { recordStream } from "../utils/live.js"
 const SHARE_VIDEO = "https://www.iesdouyin.com/share/video/{id}/"
 /** 分享页（图文） */
 const SHARE_NOTE = "https://www.iesdouyin.com/share/note/{id}/"
+/** 桌面作品页：动图视频只在这里的 SSR 数据里 */
+const NOTE_PAGE = "https://www.douyin.com/note/{id}"
 /** 直播间页：不带任何查询参数也能拿到主播、标题与流地址 */
 const LIVE_REFLOW = "https://webcast.amemv.com/douyin/webcast/reflow/{id}"
 /** 直播片段体积上限：10 秒 1080P 一般不到 20MB，留足余量 */
@@ -342,9 +345,10 @@ export class DouyinApi {
   /**
    * 取图文作品里的动图视频
    *
-   * 动图信息只出现在登录后的桌面作品页 HTML 里：匿名页只有 72KB 且不含动画数据，
-   * 带 Cookie 的页面会多出一个 `video.playAddr` 块。一次请求约 1–2 秒，
-   * 普通图文没有这个块，直接回落静态图，不会像浏览器方案那样干等。
+   * 动图作品是「一张图 + 一段 mp4」，mp4 在桌面作品页的 SSR 数据里，形如
+   * `"video":{"width":1440,..."playAddr":[{"src":"https://v26-web.douyinvod.com/..."`。
+   * 但桌面页现在会先返回 `_$jsvmprt` 挑战页，要算出 `__ac_signature` 再请求一次；
+   * 这段交给 `fetchNoteHtml` 处理，普通图文没有 playAddr，直接回落静态图。
    * @param awemeId 作品 id
    * @returns 视频直链；没 Cookie 或不是动图为 null
    */
@@ -357,20 +361,13 @@ export class DouyinApi {
 
     try {
       const ttwid = await this.#ensureTtwid()
-      const res = await this.#app.ctx.http.request<string>(`https://www.douyin.com/note/${awemeId}`, {
-        method: "GET",
-        headers: {
-          "User-Agent": PC_UA,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "zh-CN,zh;q=0.9",
-          Referer: "https://www.douyin.com/",
-          Cookie: this.#cookieHeader(ttwid)
-        },
-        responseType: "text",
-        throwOnError: false,
-        timeout: "20s"
-      })
-      return parseNoteVideo(typeof res.data === "string" ? res.data : "")
+      const html = await fetchNoteHtml(NOTE_PAGE.replace("{id}", awemeId), this.#cookieHeader(ttwid))
+      // 分享页形态的 _ROUTER_DATA 里也可能带 images[].video，先按结构取，再走 SSR 正则
+      const fromData = noteVideoOf(findAweme(extractRouterData(html)))
+      if (fromData !== "") return fromData
+      const fromHtml = parseNoteVideo(html)
+      if (fromHtml === null) this.#app.debug(`抖音图文 ${awemeId} 页面里没有动图视频，按静态图发送`)
+      return fromHtml
     } catch (error) {
       this.#app.debug(`抖音图文 ${awemeId} 取动图失败`, error)
       return null
@@ -839,6 +836,53 @@ const BASE_PARAMS = {
 const PC_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
+/** acrawler 签名缓存：nonce 与签名成对出现，过期或被拒时重算 */
+let acCache: { nonce: string; signature: string; at: number } | null = null
+/** 签名有效期：拿不到权威值，按 10 分钟保守复用，被拒会立即重算 */
+const AC_TTL = 10 * 60_000
+
+/** 清掉签名缓存（测试用） */
+export function resetAcCache(): void {
+  acCache = null
+}
+
+/**
+ * 取作品页 HTML，遇到 acrawler 挑战时算签名重试
+ *
+ * 必须用原生 fetch：`ctx.http` 会丢掉 set-cookie，而 `__ac_nonce` 只在
+ * Set-Cookie 里，没有它就拼不出签名。
+ * @param url 作品页地址
+ * @param cookie 登录 Cookie（已含 ttwid）
+ * @returns HTML
+ */
+async function fetchNoteHtml(url: string, cookie: string): Promise<string> {
+  const read = async (pair: { nonce: string; signature: string } | null): Promise<{ html: string; nonce: string }> => {
+    const ac = pair === null ? "" : `; __ac_nonce=${pair.nonce}; __ac_signature=${pair.signature}; __ac_referer=__ac_blank`
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": PC_UA,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        Referer: "https://www.douyin.com/",
+        Cookie: `${cookie}${ac}`
+      },
+      signal: AbortSignal.timeout(20_000)
+    })
+    return { html: await res.text(), nonce: nonceOf(res.headers) }
+  }
+
+  const fresh = acCache !== null && Date.now() - acCache.at < AC_TTL ? acCache : null
+  const first = await read(fresh)
+  if (!first.html.includes("_$jsvmprt")) return first.html
+
+  // 挑战页没有作品数据，用它的 nonce 算签名后再要一次
+  if (first.nonce === "") return first.html
+  const signature = solveAcChallenge(first.html, first.nonce, PC_UA)
+  acCache = { nonce: first.nonce, signature, at: Date.now() }
+  const second = await read(acCache)
+  return second.html
+}
+
 /** 签名函数形状 */
 type Signer = (query: string, userAgent: string) => Promise<string>
 
@@ -1041,7 +1085,18 @@ interface RawAweme {
     cover?: { url_list?: string[] }
     play_addr?: { uri?: string }
   }
-  images?: Array<{ url_list?: string[]; width?: number; height?: number }>
+  images?: Array<{
+    url_list?: string[]
+    width?: number
+    height?: number
+    /** 动图作品里每张图还带一段 mp4，普通图文没有 */
+    video?: {
+      play_addr?: { uri?: string; url_list?: string[] }
+      download_addr?: { url_list?: string[] }
+    }
+  }>
+  /** 部分版本的动图码率信息放在这里，同样指向那段 mp4 */
+  img_bitrate?: Array<{ play_addr?: { url_list?: string[] } }>
   statistics?: { digg_count?: number; comment_count?: number; collect_count?: number; share_count?: number }
   music?: { title?: string; author?: string }
 }
@@ -1070,6 +1125,33 @@ function findAweme(node: unknown, depth = 0): RawAweme | null {
     if (hit !== null) return hit
   }
   return null
+}
+
+/**
+ * 从作品对象里取动图视频直链
+ *
+ * 动图作品是「一张 WebP + 一段 mp4」，mp4 就挂在图片对象的 `video.play_addr` 上；
+ * 普通图文没有这个字段，返回空串让调用方回落静态图。
+ * @param aweme 作品对象
+ * @returns 视频直链；不是动图为空串
+ */
+export function noteVideoOf(aweme: RawAweme | null): string {
+  if (aweme === null) return ""
+
+  const candidates: Array<string | undefined> = []
+  for (const image of aweme.images ?? []) {
+    candidates.push(image.video?.play_addr?.url_list?.[0], image.video?.download_addr?.url_list?.[0])
+    // `uri` 有的版本是直链，有的只是视频 id，只认带协议的
+    const uri = image.video?.play_addr?.uri
+    if (uri !== undefined && /^https?:\/\//.test(uri)) candidates.push(uri)
+  }
+  for (const item of aweme.img_bitrate ?? []) candidates.push(item.play_addr?.url_list?.[0])
+
+  for (const candidate of candidates) {
+    const url = normalizeUrl(candidate ?? "")
+    if (url !== "") return url
+  }
+  return ""
 }
 
 /**

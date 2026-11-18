@@ -27,7 +27,8 @@ const {
 } = await load("services/bilibili.js")
 const { deliver, cardData } = await load("handlers/card.js")
 const { sendComments } = await load("handlers/comments.js")
-const { DouyinApi, parseLiveInfo, parseNoteVideo } = await load("services/douyin.js")
+const { DouyinApi, noteVideoOf, parseLiveInfo, parseNoteVideo, resetAcCache } = await load("services/douyin.js")
+const { extractChallengeScript, solveAcChallenge } = await load("services/douyin-ac.js")
 const { deliver: deliverDouyin } = await load("handlers/douyin.js")
 const { resolveVideo, resolveDouyinVideo, videoLabel } = await load("utils/video.js")
 const { encryptString, decryptString } = await load("utils/crypto.js")
@@ -152,6 +153,97 @@ test("图文动图：只认图片里的 video 块，普通图文返回 null", ()
     '"uri":"v1e00fgi","playAddr":[{"src":"https://v11-weba.douyinvod.com/a.mp4?a=1\\u0026b=2"}]}'
   assert.equal(parseNoteVideo(html), "https://v11-weba.douyinvod.com/a.mp4?a=1&b=2")
   assert.equal(parseNoteVideo("<html><img src='a.jpg'></html>"), null)
+})
+
+test("动图作品：从分享页数据里取 images[].video 直链，普通图文给空串", () => {
+  const animated = {
+    images: [
+      { url_list: ["https://p3.douyinpic.com/a.webp"] },
+      {
+        url_list: ["https://p3.douyinpic.com/b.webp"],
+        video: { play_addr: { url_list: ["https://v3.douyinvod.com/g.mp4?a=1"] } }
+      }
+    ]
+  }
+  assert.equal(noteVideoOf(animated), "https://v3.douyinvod.com/g.mp4?a=1")
+
+  // http 统一升到 https；download_addr 与 img_bitrate 也是合法来源
+  assert.equal(
+    noteVideoOf({ images: [{ video: { play_addr: { url_list: ["http://v3.douyinvod.com/g.mp4"] } } }] }),
+    "https://v3.douyinvod.com/g.mp4"
+  )
+  assert.equal(
+    noteVideoOf({ images: [{ video: { download_addr: { url_list: ["https://v3.douyinvod.com/d.mp4"] } } }] }),
+    "https://v3.douyinvod.com/d.mp4"
+  )
+  assert.equal(
+    noteVideoOf({ images: [{ url_list: [] }], img_bitrate: [{ play_addr: { url_list: ["https://v3.douyinvod.com/b.mp4"] } }] }),
+    "https://v3.douyinvod.com/b.mp4"
+  )
+
+  // 普通图文、空数据都不该被当成动图
+  assert.equal(noteVideoOf({ images: [{ url_list: ["https://p3.douyinpic.com/a.webp"] }] }), "")
+  assert.equal(noteVideoOf(null), "")
+})
+
+test("acrawler：取脚本、在沙箱里算出签名，不依赖浏览器", () => {
+  const html = `<html><script>var _$jsvmprt=1;window.byted_acrawler={init:function(){},sign:function(key,nonce){return "sig-"+nonce}};</script></html>`
+  assert.ok(extractChallengeScript(html).includes("byted_acrawler"))
+  assert.equal(extractChallengeScript("<html>没有挑战</html>"), "")
+  assert.equal(solveAcChallenge(html, "abc123", "UA"), "sig-abc123")
+})
+
+test("动图：先算 __ac_signature 再取 SSR，普通图文回落静态图", async () => {
+  resetAcCache()
+  const html =
+    `,"video":{"width":1440,"height":1920,"ratio":"720p","duration":2883,"dataSize":831861,` +
+    `"uri":"v1e00fgi","playAddr":[{"src":"https://v26-web.douyinvod.com/a.mp4?a=1&is_ssr=1"}]}`
+  const challenge =
+    `<html><script>var _$jsvmprt=1;window.byted_acrawler={init:function(){},sign:function(key,nonce){return "sig-"+nonce}};</script></html>`
+
+  const calls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    const cookie = String(options.headers?.Cookie ?? "")
+    calls.push({ url: String(url), cookie })
+    if (calls.length === 1) {
+      const headers = new Headers()
+      headers.append("set-cookie", "__ac_nonce=abc123; Path=/")
+      return new Response(challenge, { status: 200, headers })
+    }
+    return new Response(html, { status: 200 })
+  }
+
+  const ctx = fakeCtx()
+  ctx.config = {
+    get: () => ({ ...config, douyinCookie: "sessionid=x; ttwid=t" }),
+    patch: async () => config,
+    onChange: () => () => {}
+  }
+  ctx.kv = { async get() { return { value: "tt", at: Date.now() } }, async set() {} }
+
+  try {
+    const app = new BilibiliApp(ctx)
+    const api = new DouyinApi(app)
+
+    const url = await api.fetchNoteVideo("7706804265554200569")
+    assert.equal(url, "https://v26-web.douyinvod.com/a.mp4?a=1&is_ssr=1")
+    assert.equal(calls.length, 2, "挑战页之后要再请求一次")
+    assert.ok(calls[0].url.endsWith("/note/7706804265554200569"))
+    assert.ok(!calls[0].cookie.includes("__ac_signature"))
+    assert.ok(calls[1].cookie.includes("__ac_nonce=abc123"))
+    assert.ok(calls[1].cookie.includes("__ac_signature=sig-abc123"))
+
+    // 静态图文：SSR 里没有 playAddr，返回 null 由调用方回落静态图
+    resetAcCache()
+    calls.length = 0
+    globalThis.fetch = async () => new Response("<html>普通图文</html>", { status: 200 })
+    assert.equal(await api.fetchNoteVideo("7706804265554200569"), null)
+    app.dispose()
+  } finally {
+    globalThis.fetch = realFetch
+    resetAcCache()
+  }
 })
 
 test("直播页解析：看过、点赞、舰长", () => {

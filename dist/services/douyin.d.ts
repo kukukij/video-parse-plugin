@@ -81,9 +81,10 @@ export declare class DouyinApi {
     /**
      * 取图文作品里的动图视频
      *
-     * 动图信息只出现在登录后的桌面作品页 HTML 里：匿名页只有 72KB 且不含动画数据，
-     * 带 Cookie 的页面会多出一个 `video.playAddr` 块。一次请求约 1–2 秒，
-     * 普通图文没有这个块，直接回落静态图，不会像浏览器方案那样干等。
+     * 动图作品是「一张图 + 一段 mp4」，mp4 在桌面作品页的 SSR 数据里，形如
+     * `"video":{"width":1440,..."playAddr":[{"src":"https://v26-web.douyinvod.com/..."`。
+     * 但桌面页现在会先返回 `_$jsvmprt` 挑战页，要算出 `__ac_signature` 再请求一次；
+     * 这段交给 `fetchNoteHtml` 处理，普通图文没有 playAddr，直接回落静态图。
      * @param awemeId 作品 id
      * @returns 视频直链；没 Cookie 或不是动图为 null
      */
@@ -122,6 +123,8 @@ export declare class DouyinApi {
         showPictures?: boolean;
     }): Promise<DouyinCommentResult | null>;
 }
+/** 清掉签名缓存（测试用） */
+export declare function resetAcCache(): void;
 /**
  * 从桌面作品页里取动图视频
  *
@@ -154,3 +157,68 @@ export declare function parseLiveInfo(html: string): {
     living: boolean;
     streamUrl: string;
 } | null;
+/** 原始作品结构（只声明用到的字段） */
+interface RawAweme {
+    aweme_id?: string;
+    desc?: string;
+    create_time?: number;
+    author?: {
+        sec_uid?: string;
+        nickname?: string;
+        avatar_thumb?: {
+            url_list?: string[];
+        };
+    };
+    video?: {
+        duration?: number;
+        width?: number;
+        height?: number;
+        cover?: {
+            url_list?: string[];
+        };
+        play_addr?: {
+            uri?: string;
+        };
+    };
+    images?: Array<{
+        url_list?: string[];
+        width?: number;
+        height?: number;
+        /** 动图作品里每张图还带一段 mp4，普通图文没有 */
+        video?: {
+            play_addr?: {
+                uri?: string;
+                url_list?: string[];
+            };
+            download_addr?: {
+                url_list?: string[];
+            };
+        };
+    }>;
+    /** 部分版本的动图码率信息放在这里，同样指向那段 mp4 */
+    img_bitrate?: Array<{
+        play_addr?: {
+            url_list?: string[];
+        };
+    }>;
+    statistics?: {
+        digg_count?: number;
+        comment_count?: number;
+        collect_count?: number;
+        share_count?: number;
+    };
+    music?: {
+        title?: string;
+        author?: string;
+    };
+}
+/**
+ * 从作品对象里取动图视频直链
+ *
+ * 动图作品是「一张 WebP + 一段 mp4」，mp4 就挂在图片对象的 `video.play_addr` 上；
+ * 普通图文没有这个字段，返回空串让调用方回落静态图。
+ * @param aweme 作品对象
+ * @returns 视频直链；不是动图为空串
+ */
+export declare function noteVideoOf(aweme: RawAweme | null): string;
+export {};
