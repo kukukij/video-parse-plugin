@@ -2,6 +2,12 @@ import type { MessageEvent, Segment } from "@yunzai-ng/types";
 import type { BilibiliApp } from "../core/app.js";
 import type { BilibiliVideoInfo } from "../types.js";
 /**
+ * 可能已经拿到、也可能还在跑的任务
+ *
+ * 投递时按「卡片 → 视频 → 评论」的发送顺序逐个等，先好先发；评论图无论多早就绪都留到最后。
+ */
+export type Pending<T> = T | Promise<T>;
+/**
  * 组装模板数据
  * @param info 视频信息
  * @returns 模板变量
@@ -56,11 +62,12 @@ export declare function splitForForward(segments: Segment[]): {
  * @param app 运行期状态
  * @param e 触发解析的消息事件
  * @param info 视频信息
- * @param videoFile 已下载的视频路径，可无
- * @param commentsImage 已渲染好的评论图，可无
+ * @param videoFile 已下载的视频路径，也可以是仍在下载的任务：直发时卡片先走，走到视频那一步才等它
+ * @param commentsImage 已渲染好的评论图，也可以是仍在渲染的任务；无论何时就绪都排在最后发
+ * @param preRenderedSegments 卡片渲染得早时可直接传进来，省掉一次串行等待
  * @returns 是否至少成功送出一条消息
  */
-export declare function deliver(app: BilibiliApp, e: MessageEvent, info: BilibiliVideoInfo, videoFile?: string, commentsImage?: Segment | null): Promise<boolean>;
+export declare function deliver(app: BilibiliApp, e: MessageEvent, info: BilibiliVideoInfo, videoFile?: Pending<string | undefined>, commentsImage?: Pending<Segment | null>, preRenderedSegments?: Pending<Segment[]>): Promise<boolean>;
 /**
  * 给消息贴一个表情，表示"在处理"
  *

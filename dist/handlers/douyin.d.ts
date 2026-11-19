@@ -1,6 +1,7 @@
 import type { MessageEvent, Segment } from "@yunzai-ng/types";
 import type { BilibiliApp } from "../core/app.js";
 import type { DouyinInfo } from "../types/douyin.js";
+import { type Pending } from "./card.js";
 /**
  * 注册抖音的自动解析中间件
  * @param app 运行期状态
@@ -19,8 +20,9 @@ export declare function registerDouyin(app: BilibiliApp): () => void;
  * @param app 运行期状态
  * @param e 消息事件
  * @param info 作品信息
- * @param videoFile 已下载的视频路径
- * @param commentsImage 已渲染好的评论图
+ * @param videoFile 已下载的视频路径，也可以是仍在下载的任务：直发时卡片先走，走到视频那一步才等它
+ * @param commentsImage 已渲染好的评论图，也可以是仍在渲染的任务；无论何时就绪都排在最后发
+ * @param preRenderedCard 卡片渲染得早时可直接传进来，省掉一次串行等待
  * @returns false 卡片没送出去；sent 已送达；late 转发超时但消息已在路上
  */
-export declare function deliver(app: BilibiliApp, e: MessageEvent, info: DouyinInfo, videoFile?: string, commentsImage?: Segment | null): Promise<"sent" | "late" | false>;
+export declare function deliver(app: BilibiliApp, e: MessageEvent, info: DouyinInfo, videoFile?: Pending<string | undefined>, commentsImage?: Pending<Segment | null>, preRenderedCard?: Pending<Segment>): Promise<"sent" | "late" | false>;

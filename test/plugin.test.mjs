@@ -395,6 +395,44 @@ test("关掉合并转发时，图片与视频分成两条发，同样不附链�
   assert.ok(!JSON.stringify(sent).includes("bilibili.com/video"))
 })
 
+test("直发：卡片不等下载先发，评论图无论多早就绪都最后发", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+  const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
+
+  let releaseVideo
+  const videoTask = new Promise(resolve => {
+    releaseVideo = resolve
+  })
+  let releaseComments
+  const commentsTask = new Promise(resolve => {
+    releaseComments = resolve
+  })
+
+  const { e, sent } = fakeEvent({ forward: false })
+  const done = deliver(app, e, info, videoTask, commentsTask)
+
+  // 卡片不等视频：让出一轮事件循环后就应该已经发出去了
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sent.length, 1)
+  assert.deepEqual(
+    sent[0].map(segment => segment?.type),
+    ["image", "text"]
+  )
+
+  releaseVideo("/tmp/fake.mp4")
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sent.length, 2)
+  assert.equal(sent[1].type, "video")
+  // 评论图尚未就绪，不能抢在视频后面提前发
+  assert.ok(!sent.some(item => item?.type === "image" && item.file === "comments.png"))
+
+  releaseComments({ type: "image", data: "comments.png" })
+  await done
+  assert.equal(sent.length, 3)
+  assert.equal(sent[2].type, "image")
+})
+
 test("视频发送失败时信息卡片仍然算送达", async () => {
   const app = new BilibiliApp(fakeCtx())
   await app.restore()
@@ -1685,15 +1723,15 @@ test("点赞门槛把评论全过滤掉时不发图", async () => {
 
 test("视频档位：画质与体积上限合成一项，不下载/未知值都不下视频", () => {
   // 每档都自带画质与上限，下游拿到的仍是两个参数
-  assert.deepEqual(resolveVideo("1080p"), { quality: "1080p", maxMB: 250 })
-  assert.deepEqual(resolveVideo("4k"), { quality: "4k", maxMB: 800 })
-  assert.deepEqual(resolveVideo("auto"), { quality: "auto", maxMB: 250 })
+  assert.deepEqual(resolveVideo("1080p"), { quality: "1080p", maxMB: 150 })
+  assert.deepEqual(resolveVideo("4k"), { quality: "4k", maxMB: 500 })
+  assert.deepEqual(resolveVideo("auto"), { quality: "auto", maxMB: 200 })
   // 不下载、没配、写错的值都当「不下载」，免得配置写错时突然开始下大文件
   assert.equal(resolveVideo("off"), null)
   assert.equal(resolveVideo(undefined), null)
   assert.equal(resolveVideo("1080P"), null)
 
-  assert.deepEqual(resolveDouyinVideo("720p"), { quality: "720p", maxMB: 200 })
+  assert.deepEqual(resolveDouyinVideo("720p"), { quality: "720p", maxMB: 120 })
   assert.equal(resolveDouyinVideo("4k"), null)
   assert.equal(resolveDouyinVideo("off"), null)
 
@@ -1812,6 +1850,24 @@ test("抖音解析：从分享页的 _ROUTER_DATA 里取作品信息", async () 
   assert.equal(info?.stat.digg, 63806)
   assert.equal(info?.playUri, "v0300fg10000da2dm17og65slqbqs490")
   assert.equal(info?.isImages, false)
+})
+
+test("抖音播放地址：只用一次分段 GET 探测，遇到 403 的档位才换下一档", async () => {
+  const ctx = fakeCtx()
+  const calls = []
+  ctx.http = {
+    async request(url, opts = {}) {
+      calls.push({ method: opts.method, range: opts.headers?.Range, ratio: new URL(url).searchParams.get("ratio") })
+      if (url.includes("ratio=1080p")) return { status: 403, headers: { "content-length": "32" }, data: undefined }
+      return { status: 206, headers: { "content-range": "bytes 0-0/5656037", "content-type": "video/mp4" }, data: undefined }
+    }
+  }
+
+  const picked = await new DouyinApi(new BilibiliApp(ctx)).pickPlayUrl("v2800fgi0000dbvgj7nog65litkoj1lg", "1080p")
+  assert.equal(picked?.ratio, "720p")
+  assert.ok(picked.url.includes("video_id=v2800fgi0000dbvgj7nog65litkoj1lg"))
+  assert.deepEqual(calls.map(item => item.method), ["GET", "GET"])
+  assert.ok(calls.every(item => item.range === "bytes=0-0"))
 })
 
 test("抖音评论：内嵌回复取多条、作者标命中且排最前、楼中楼接口空体不拖慢", async () => {

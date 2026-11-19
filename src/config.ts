@@ -22,12 +22,12 @@ export const configSchema = s.object({
   videoMode: s
     .enum(["off", "auto", "480p", "720p", "1080p", "1080p60", "4k"], {
       off: "不下载（只发卡片）",
-      auto: "自动（最高画质，≤250MB）",
-      "480p": "480P（≤50MB）",
-      "720p": "720P（≤120MB）",
-      "1080p": "1080P（≤250MB）",
-      "1080p60": "1080P60（≤400MB）",
-      "4k": "4K（≤800MB）"
+      auto: "自动（最高画质，≤200MB）",
+      "480p": "480P（≤40MB）",
+      "720p": "720P（≤80MB）",
+      "1080p": "1080P（≤150MB）",
+      "1080p60": "1080P60（≤300MB）",
+      "4k": "4K（≤500MB）"
     })
     .default("off")
     .title("视频下载")
@@ -57,9 +57,9 @@ export const configSchema = s.object({
   douyinVideo: s
     .enum(["off", "540p", "720p", "1080p"], {
       off: "不下载（只发卡片）",
-      "540p": "540P（≤100MB）",
-      "720p": "720P（≤200MB）",
-      "1080p": "1080P（≤400MB）"
+      "540p": "540P（≤60MB）",
+      "720p": "720P（≤120MB）",
+      "1080p": "1080P（≤250MB）"
     })
     .default("off")
     .title("视频下载")

@@ -14,8 +14,8 @@ import { DouyinApi } from "../services/douyin.js"
 import type { DouyinInfo } from "../types/douyin.js"
 import { formatCount, formatDuration } from "../utils/format.js"
 import { resolveDouyinVideo } from "../utils/video.js"
-import { react } from "./card.js"
-import { deliverLive } from "./live.js"
+import { type Pending, react } from "./card.js"
+import { buildLiveCard, deliverLive } from "./live.js"
 
 /** 卡片模板 */
 const CARD = "douyin-card"
@@ -98,29 +98,40 @@ async function tryParse(app: BilibiliApp, api: DouyinApi, e: MessageEvent): Prom
     return true
   }
 
-  await react(e, "10024")
+  // 表情只是「在处理」的提示，不必占住解析的起跑线
+  void react(e, "10024")
   const info = await api.fetchInfo(awemeId)
   if (info === null) {
     app.debug("抖音作品解析失败，静默跳过")
     return true
   }
 
-  // 图文里的动图可以当视频发；取不到就继续走静态图，不额外打扰
-  let noteVideoFile: string | null = null
-  if (info.isImages && app.config.douyinNoteVideo === true) {
-    const url = await api.fetchNoteVideo(info.awemeId)
-    if (url !== null) noteVideoFile = await api.downloadNoteVideo(info.awemeId, url)
+  /**
+   * 取视频文件
+   *
+   * 图文里的动图可以当视频发，取不到就继续走静态图，不额外打扰；普通作品按档位下载。
+   * 这一步通常是整条链路里最慢的，故与卡片、评论图的渲染并行。
+   * @returns 视频路径；不下载或失败为 undefined
+   */
+  const loadVideo = async (): Promise<string | undefined> => {
+    if (info.isImages) {
+      if (app.config.douyinNoteVideo !== true) return undefined
+      const url = await api.fetchNoteVideo(info.awemeId)
+      return url === null ? undefined : (await api.downloadNoteVideo(info.awemeId, url)) ?? undefined
+    }
+    // 档位里带着画质与体积上限，选「不下载」时为 undefined
+    const profile = resolveDouyinVideo(app.config.douyinVideo)
+    return profile === null ? undefined : (await api.download(info, profile.maxMB, profile.quality)) ?? undefined
   }
-
-  // 档位里带着画质与体积上限；图文作品不发视频，选「不下载」也为 null
-  const profile = info.isImages || noteVideoFile !== null ? null : resolveDouyinVideo(app.config.douyinVideo)
-  const videoFile = noteVideoFile ?? (profile === null ? null : await api.download(info, profile.maxMB, profile.quality))
 
   // 评论图要先渲染好，才能和卡片、视频、图片一起装进同一条转发
   const limit = app.config.commentSend === false ? 0 : app.config.commentCount ?? 0
-  const commentsImage = limit > 0 ? await buildComments(app, api, info, limit) : null
+  // 三件事同时起跑；卡片一好就先直发，视频与评论图交给 deliver 按序等
+  const videoTask = loadVideo()
+  const commentsTask = limit > 0 ? buildComments(app, api, info, limit) : Promise.resolve(null)
+  const card = await renderCard(app, info)
 
-  const sent = await deliver(app, e, info, videoFile ?? undefined, commentsImage)
+  const sent = await deliver(app, e, info, videoTask, commentsTask, card)
   if (sent !== false) {
     await app.markParsed({ bvid: `DY-${info.awemeId}`, title: info.desc.slice(0, 40), gid, group: e.group?.name })
     app.touchCooldown(gid, info.awemeId)
@@ -159,11 +170,13 @@ async function replyLive(
     return
   }
 
-  await react(e, "10024")
+  void react(e, "10024")
 
   const info = await api.fetchLive(pageUrl, roomId)
   if (info === null) return
 
+  // 卡片只要信息，与录制互不依赖：先起渲染，让它的两秒藏在录制里
+  const cardTask = buildLiveCard(app, "douyin", info, shareUrl)
   const seconds = Math.max(0, Math.min(60, Number(app.config.douyinLiveRecord ?? 0)))
   let videoFile: string | undefined
   if (info.living && seconds > 0) {
@@ -171,7 +184,7 @@ async function replyLive(
     if (file !== null) videoFile = file
   }
 
-  const sent = await deliverLive(app, e, info, "douyin", videoFile, shareUrl)
+  const sent = await deliverLive(app, e, info, "douyin", videoFile, shareUrl, cardTask)
   if (!sent) return
   app.touchCooldown(gid, key)
   await react(e, "124")
@@ -189,19 +202,21 @@ async function replyLive(
  * @param app 运行期状态
  * @param e 消息事件
  * @param info 作品信息
- * @param videoFile 已下载的视频路径
- * @param commentsImage 已渲染好的评论图
+ * @param videoFile 已下载的视频路径，也可以是仍在下载的任务：直发时卡片先走，走到视频那一步才等它
+ * @param commentsImage 已渲染好的评论图，也可以是仍在渲染的任务；无论何时就绪都排在最后发
+ * @param preRenderedCard 卡片渲染得早时可直接传进来，省掉一次串行等待
  * @returns false 卡片没送出去；sent 已送达；late 转发超时但消息已在路上
  */
 export async function deliver(
   app: BilibiliApp,
   e: MessageEvent,
   info: DouyinInfo,
-  videoFile?: string,
-  commentsImage?: Segment | null
+  videoFile?: Pending<string | undefined>,
+  commentsImage?: Pending<Segment | null>,
+  preRenderedCard?: Pending<Segment>
 ): Promise<"sent" | "late" | false> {
   const config = app.config
-  const card = await renderCard(app, info)
+  const card = await (preRenderedCard ?? renderCard(app, info))
   const images = info.isImages ? info.images.slice(0, 9) : []
   const canForward = e.isGroup && config.cardAsForward && e.bot.caps.has("forward")
   // 图片合并开关独立生效：总开关关着时，图片自己也能单独做成一条转发
@@ -244,11 +259,12 @@ export async function deliver(
     }
   }
 
-  /** 图片节点，一张图一条消息；动图作品的视频排在图片之后 */
-  const imageNodes = (): ForwardNode[] => {
+  /** 图片节点，一张图一条消息；动图作品的视频排在图片之后（没下载完就在这里等） */
+  const imageNodes = async (): Promise<ForwardNode[]> => {
     const nodes = images.map(url => seg.node([seg.image(url)], { name: "抖音图文", uid: e.selfId }))
-    if (videoFile !== undefined) {
-      nodes.push(seg.node([seg.video(videoFile)], { name: "抖音视频", uid: e.selfId }))
+    const file = await videoFile
+    if (file !== undefined) {
+      nodes.push(seg.node([seg.video(file)], { name: "抖音视频", uid: e.selfId }))
     }
     return nodes
   }
@@ -260,7 +276,7 @@ export async function deliver(
    */
   const sendImagesAlone = async (): Promise<"sent" | "late" | "none"> => {
     if (imageMerge) {
-      const result = await sendForward(imageNodes(), `抖音图文 · ${images.length} 张`, true)
+      const result = await sendForward(await imageNodes(), `抖音图文 · ${images.length} 张`, true)
       if (result !== "fail") return result === "timeout" ? "late" : "sent"
     }
     try {
@@ -271,38 +287,42 @@ export async function deliver(
     return "none"
   }
 
-  /** 视频单独直发 */
+  /** 视频单独直发（下载还没完就在这里等） */
   const sendVideoAlone = async (): Promise<void> => {
-    if (videoFile === undefined) return
+    const file = await videoFile
+    if (file === undefined) return
     try {
-      await e.reply(seg.video(videoFile))
+      await e.reply(seg.video(file))
     } catch (error) {
       app.log("warn", "抖音视频发送失败（卡片已送达）", error)
     }
   }
 
-  /** 评论图单独直发 */
+  /** 评论图单独直发；它是最后一条，渲染没完就在这里等 */
   const sendCommentsAlone = async (): Promise<void> => {
-    if (commentsImage === undefined || commentsImage === null) return
+    const comments = await commentsImage
+    if (comments === undefined || comments === null) return
     try {
-      await e.reply(commentsImage)
+      await e.reply(comments)
     } catch (error) {
       app.log("warn", "抖音评论图发送失败（卡片已送达）", error)
     }
   }
 
   if (canForward) {
+    // 转发是一条消息，三项都得齐了才能发
+    const [file, comments] = await Promise.all([videoFile, commentsImage])
     const cardNode = seg.node([card], { name: "抖音解析", uid: e.selfId })
     const videoNode =
-      videoFile === undefined ? undefined : seg.node([seg.video(videoFile)], { name: "抖音视频", uid: e.selfId })
+      file === undefined ? undefined : seg.node([seg.video(file)], { name: "抖音视频", uid: e.selfId })
     const commentNode =
-      commentsImage === undefined || commentsImage === null
+      comments === undefined || comments === null
         ? undefined
-        : seg.node([commentsImage], { name: "抖音评论", uid: e.selfId })
+        : seg.node([comments], { name: "抖音评论", uid: e.selfId })
 
     if (imageMerge) {
       // 两个开关都开：一条总转发 = 卡片 → 图文转发（图片/视频，一条消息一张）→ 评论图
-      const inner = nestedMedia(e, images, videoFile)
+      const inner = nestedMedia(e, images, file)
       if (inner !== undefined) {
         const result = await sendForward(
           [cardNode, seg.node(inner, { name: "抖音图文", uid: e.selfId }), ...(commentNode === undefined ? [] : [commentNode])],

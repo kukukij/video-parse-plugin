@@ -139,7 +139,7 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `biliEnabled` | `true` | 哔哩哔哩解析开关；关掉后不响应 B 站链接（不影响抖音） |
-| `videoMode` | `off` | `off` / `auto`(≤250MB) / `480p`(≤50MB) / `720p`(≤120MB) / `1080p`(≤250MB) / `1080p60`(≤400MB) / `4k`(≤800MB) |
+| `videoMode` | `off` | `off` / `auto`(≤200MB) / `480p`(≤40MB) / `720p`(≤80MB) / `1080p`(≤150MB) / `1080p60`(≤300MB) / `4k`(≤500MB) |
 | `liveRecord` | `10` | 直播录制秒数（0–60），`0` = 只发卡片 |
 
 ### 抖音
@@ -147,7 +147,7 @@ Windows 手动装的话把 `bin` 目录加进 `PATH`。装完 `ffmpeg -version` 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `douyinEnabled` | `true` | 是否解析抖音链接 |
-| `douyinVideo` | `off` | `off` / `540p`(≤100MB) / `720p`(≤200MB) / `1080p`(≤400MB) |
+| `douyinVideo` | `off` | `off` / `540p`(≤60MB) / `720p`(≤120MB) / `1080p`(≤250MB) |
 | `douyinImagesAsForward` | `true` | 图文图片合并转发（一条消息一张）；合并转发也开时做成总转发里的图文转发 |
 | `douyinNoteVideo` | `false` | 动图作品用 Cookie 取原视频一起发，约 1–2 秒；失败仍发静态图 |
 | `douyinLiveRecord` | `10` | 直播录制秒数（0–60），`0` = 只发卡片 |

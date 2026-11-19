@@ -164,7 +164,9 @@ async function renderLiveCard(app: BilibiliApp, view: LiveCardView): Promise<Seg
   try {
     const image = await app.ctx.render(view.template, view.data, {
       selector: "#card",
-      type: "png",
+      // 与作品卡片一致：纯色背景用 jpeg，体积小、编码快
+      type: "jpeg",
+      quality: 90,
       viewport: { width: 760, scale: 2 }
     })
     return Array.isArray(image) ? (image[0] ?? null) : image
@@ -172,6 +174,29 @@ async function renderLiveCard(app: BilibiliApp, view: LiveCardView): Promise<Seg
     app.debug("直播卡片渲染失败，回落为封面", error)
     return null
   }
+}
+
+/**
+ * 渲染直播卡片
+ *
+ * 从取信息到出图只依赖直播间数据，故可以比录制先跑：调用方拿到信息后立刻起这个任务，
+ * 再去录片段，两秒的渲染时间就藏在录制的十几秒里。
+ * @param app 运行期状态
+ * @param platform 平台
+ * @param info 直播间信息
+ * @param shareUrl 抖音原分享链接
+ * @returns 图片段；关闭渲染或渲染失败为 null
+ */
+export async function buildLiveCard(
+  app: BilibiliApp,
+  platform: "bilibili" | "douyin",
+  info: BilibiliLiveInfo | DouyinLiveInfo,
+  shareUrl = ""
+): Promise<Segment | null> {
+  const view = platform === "bilibili" ? bilibiliView(info as BilibiliLiveInfo) : douyinView(info as DouyinLiveInfo, shareUrl)
+  // 抖音没有「渲染卡片」开关，始终出卡；B 站跟随该开关，关掉时只发封面
+  if (platform !== "douyin" && !app.config.renderCard) return null
+  return renderLiveCard(app, view)
 }
 
 /**
@@ -185,6 +210,7 @@ async function renderLiveCard(app: BilibiliApp, view: LiveCardView): Promise<Seg
  * @param platform 平台
  * @param videoFile 录制好的片段，可无
  * @param shareUrl 抖音原分享链接
+ * @param cardTask 已经起好的卡片渲染任务，可无；不传则在这里现渲染
  * @returns 是否至少成功送出一条消息
  */
 export async function deliverLive(
@@ -193,11 +219,11 @@ export async function deliverLive(
   info: BilibiliLiveInfo | DouyinLiveInfo,
   platform: "bilibili" | "douyin",
   videoFile?: string,
-  shareUrl = ""
+  shareUrl = "",
+  cardTask?: Promise<Segment | null>
 ): Promise<boolean> {
   const view = platform === "bilibili" ? bilibiliView(info as BilibiliLiveInfo) : douyinView(info as DouyinLiveInfo, shareUrl)
-  // 抖音没有「渲染卡片」开关，始终出卡；B 站跟随该开关，关掉时只发封面
-  const card = platform === "douyin" || app.config.renderCard ? await renderLiveCard(app, view) : null
+  const card = cardTask === undefined ? await buildLiveCard(app, platform, info, shareUrl) : await cardTask
   const infoSegments: Segment[] =
     card !== null ? [card] : info.cover === "" ? [seg.text(view.fallbackText)] : [seg.image(info.cover), seg.text(view.fallbackText)]
 

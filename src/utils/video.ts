@@ -13,12 +13,12 @@ export type VideoMode = "off" | "auto" | "480p" | "720p" | "1080p" | "1080p60" |
 
 /** B 站档位 → 画质与体积上限（MB） */
 export const VIDEO_PROFILE: Record<Exclude<VideoMode, "off">, { quality: VideoQuality; maxMB: number }> = {
-  auto: { quality: "auto", maxMB: 250 },
-  "480p": { quality: "480p", maxMB: 50 },
-  "720p": { quality: "720p", maxMB: 120 },
-  "1080p": { quality: "1080p", maxMB: 250 },
-  "1080p60": { quality: "1080p60", maxMB: 400 },
-  "4k": { quality: "4k", maxMB: 800 }
+  auto: { quality: "auto", maxMB: 200 },
+  "480p": { quality: "480p", maxMB: 40 },
+  "720p": { quality: "720p", maxMB: 80 },
+  "1080p": { quality: "1080p", maxMB: 150 },
+  "1080p60": { quality: "1080p60", maxMB: 300 },
+  "4k": { quality: "4k", maxMB: 500 }
 }
 
 /** 抖音的下载档位（抖音只有三档清晰度，没有 auto） */
@@ -26,9 +26,9 @@ export type DouyinVideoMode = "off" | "540p" | "720p" | "1080p"
 
 /** 抖音档位 → 画质与体积上限（MB） */
 export const DOUYIN_VIDEO_PROFILE: Record<Exclude<DouyinVideoMode, "off">, { quality: DouyinQuality; maxMB: number }> = {
-  "540p": { quality: "540p", maxMB: 100 },
-  "720p": { quality: "720p", maxMB: 200 },
-  "1080p": { quality: "1080p", maxMB: 400 }
+  "540p": { quality: "540p", maxMB: 60 },
+  "720p": { quality: "720p", maxMB: 120 },
+  "1080p": { quality: "1080p", maxMB: 250 }
 }
 
 /**

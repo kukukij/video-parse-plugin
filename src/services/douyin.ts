@@ -293,17 +293,25 @@ export class DouyinApi {
     const order = [prefer, ...RATIOS.filter(item => item !== prefer)]
     for (const ratio of order) {
       const url = `${PLAY_API}?video_id=${encodeURIComponent(uri)}&ratio=${ratio}&line=0`
+      /*
+       * 直接用分段 GET 探一次，不发 HEAD：有些 CDN 节点（如 v27-cold.douyinvod.com）
+       * 对 HEAD 一律回 403，对 GET 却正常；HEAD 能用的节点上 GET 也只取首字节。
+       * 不认 Range 的节点会回整段，但 responseType 为 none，正文在首块就被丢弃。
+       */
       try {
         const res = await this.#app.ctx.http.request(url, {
-          method: "HEAD",
-          headers: { "User-Agent": MOBILE_UA, Referer: "https://www.douyin.com/" },
+          method: "GET",
+          headers: { "User-Agent": MOBILE_UA, Referer: "https://www.douyin.com/", Range: "bytes=0-0" },
           responseType: "none",
           throwOnError: false,
           timeout: "15s"
         })
-        if (res.status >= 200 && res.status < 300) {
-          const length = Number.parseInt(String(res.headers["content-length"] ?? ""), 10)
-          if (Number.isFinite(length) && length > 1024) return { url, ratio }
+        if (res.status < 200 || res.status >= 300) continue
+        const type = String(res.headers["content-type"] ?? "")
+        const ranged = String(res.headers["content-range"] ?? "") !== ""
+        const length = Number.parseInt(String(res.headers["content-length"] ?? ""), 10)
+        if (ranged || /^(video\/|application\/octet-stream)/i.test(type) || (Number.isFinite(length) && length > 1024)) {
+          return { url, ratio }
         }
       } catch (error) {
         this.#app.debug(`抖音 ${ratio} 探测失败，换下一档`, error)

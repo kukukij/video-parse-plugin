@@ -1,8 +1,8 @@
 import { cleanupFile, containsBilibiliLink, extractLinkFromSegments } from "../services/bilibili.js";
 import { resolveVideo } from "../utils/video.js";
-import { deliver, react } from "./card.js";
+import { buildInfoSegments, deliver, react } from "./card.js";
 import { buildCommentsImage } from "./comments.js";
-import { deliverLive } from "./live.js";
+import { buildLiveCard, deliverLive } from "./live.js";
 /** 自动解析的中间件优先级：比默认的 100 靠里，让改写类中间件先跑 */
 const PRIORITY = 200;
 /**
@@ -72,13 +72,6 @@ export async function tryParse(app, api, e) {
     // 黑名单里的群直接放行给后续插件：既不解析，也不把消息吞掉
     if (e.isGroup && e.group !== undefined && !app.isGroupEnabled(e.group.gid))
         return false;
-    if (app.config.parseCacheTTL > 0) {
-        const videoId = await api.extractVideoId(target);
-        if (videoId !== null && app.inCooldown(gid, videoId)) {
-            app.debug(`群 ${gid} 里 ${videoId} 还在冷却中，跳过`);
-            return true;
-        }
-    }
     return runParse(app, api, e, target, gid);
 }
 /**
@@ -97,31 +90,43 @@ async function runParse(app, api, e, target, gid) {
     if (expanded.liveRoomId !== null) {
         return handleLive(app, api, e, expanded.liveRoomId, gid);
     }
-    await react(e, "10024");
+    // 冷却判断放在短链展开之后：展开后的地址里已经有 BV 号，不会再走一次跳转
+    if (app.config.parseCacheTTL > 0) {
+        const videoId = await api.extractVideoId(expanded.url);
+        if (videoId !== null && app.inCooldown(gid, videoId)) {
+            app.debug(`群 ${gid} 里 ${videoId} 还在冷却中，跳过`);
+            return true;
+        }
+    }
+    // 表情只是「在处理」的提示，不必占住解析的起跑线
+    void react(e, "10024");
     const info = await api.parse(expanded.url);
     if (info === null) {
         app.debug("链接存在但解析失败，静默跳过");
         return true;
     }
     app.debug(`解析成功 ${info.bvid}，耗时 ${Date.now() - startedAt}ms`);
-    let videoFile;
-    // 档位里已经带上了体积上限，选「不下载」时为 null
+    // 下载、评论图、卡片三者互不依赖，同时起跑：卡片一出图就先直发，视频下载完跟着发，
+    // 评论图无论多早就绪都留到最后
     const profile = resolveVideo(app.config.videoMode);
-    if (profile !== null) {
+    const videoTask = (async () => {
+        if (profile === null)
+            return undefined;
         const file = await api.download(info, profile.maxMB);
-        if (file !== null)
-            videoFile = file;
-        else
+        if (file === null)
             app.log("warn", `视频未下载，仅发送信息：${info.bvid}`);
-    }
+        return file ?? undefined;
+    })();
     // 评论图先备好：转发开启时它是转发里的一个节点（聊天记录），关闭时 deliver 单独发
-    const commentsImage = await buildCommentsImage(app, api, e, info);
-    const sent = await deliver(app, e, info, videoFile, commentsImage);
+    const commentsTask = buildCommentsImage(app, api, e, info);
+    const sent = await deliver(app, e, info, videoTask, commentsTask, await buildInfoSegments(app, info));
     if (sent) {
         await app.markParsed({ bvid: info.bvid, title: info.title, gid, group: e.group?.name });
         app.touchCooldown(gid, info.bvid);
         await react(e, "124");
     }
+    // deliver 已经等过下载，这里拿到的必然是最终结果
+    const videoFile = await videoTask;
     if (videoFile !== undefined) {
         // 发送接口返回时文件已被平台读完，但 QQ 侧可能仍在转码；留一分钟再删更稳妥
         app.later(() => void cleanupFile(app, videoFile), 60_000);
@@ -147,12 +152,14 @@ async function handleLive(app, api, e, roomId, gid) {
         return true;
     }
     const startedAt = Date.now();
-    await react(e, "10024");
+    void react(e, "10024");
     const info = await api.fetchLiveInfo(roomId);
     if (info === null) {
         app.debug(`直播间 ${roomId} 信息拉取失败，静默跳过`);
         return true;
     }
+    // 卡片只要信息，与录制互不依赖：先起渲染，让它的两秒藏在录制里
+    const cardTask = buildLiveCard(app, "bilibili", info);
     const seconds = Math.max(0, Math.min(60, Number(app.config.liveRecord ?? 0)));
     let videoFile;
     if (info.living && seconds > 0) {
@@ -160,7 +167,7 @@ async function handleLive(app, api, e, roomId, gid) {
         if (file !== null)
             videoFile = file;
     }
-    const sent = await deliverLive(app, e, info, "bilibili", videoFile);
+    const sent = await deliverLive(app, e, info, "bilibili", videoFile, "", cardTask);
     if (sent) {
         app.touchCooldown(gid, key);
         await react(e, "124");

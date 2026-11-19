@@ -403,26 +403,29 @@ export class BilibiliApi {
      */
     async fetchLiveInfo(roomId) {
         try {
-            const room = await this.http.get(`${LIVE_INFO_API}?room_id=${roomId}`, {
-                headers: this.headers(),
-                timeout: "15s",
-                retry: 1
-            });
+            // 房间信息、主播昵称、页面统计互不依赖，三路一起要，省掉两次串行往返
+            const [room, anchor, extra] = await Promise.all([
+                this.http.get(`${LIVE_INFO_API}?room_id=${roomId}`, {
+                    headers: this.headers(),
+                    timeout: "15s",
+                    retry: 1
+                }),
+                // 昵称与头像在另一个接口里，拿不到就留空，提示里退回「哔哩哔哩主播」
+                this.http
+                    .get(`${LIVE_ANCHOR_API}?roomid=${roomId}`, {
+                    headers: this.headers(),
+                    timeout: "15s"
+                })
+                    .catch(() => null),
+                this.fetchLivePage(roomId)
+            ]);
             if (room.code !== 0 || room.data === undefined) {
                 this.#app.log("warn", `哔哩哔哩直播返回错误：code=${room.code} ${room.message}`);
                 return null;
             }
-            // 昵称与头像在另一个接口里，拿不到就留空，提示里退回「哔哩哔哩主播」
-            const anchor = await this.http
-                .get(`${LIVE_ANCHOR_API}?roomid=${roomId}`, {
-                headers: this.headers(),
-                timeout: "15s"
-            })
-                .catch(() => null);
             const living = room.data.live_status === 1;
             // 分区两级经常重复（比如「娱乐 · 娱乐」），去重后再拼
             const areas = [room.data.parent_area_name, room.data.area_name].filter((name) => name !== undefined && name !== "");
-            const extra = await this.fetchLivePage(roomId);
             return {
                 roomId,
                 title: room.data.title ?? "",
@@ -751,19 +754,25 @@ export class BilibiliApi {
                 this.#app.log("warn", `视频 ${formatSize(declared)} 超过上限 ${maxMB}MB，未下载`);
                 return null;
             }
-            const videoBytes = await this.#downloadAny(videoUrls, videoPart);
+            // 音轨和视频是两条独立的流，并行下载：音轨虽小，串行也要多等半秒到一秒
+            const audioUrls = audio === undefined ? [] : streamUrls(audio);
+            const [videoBytes, audioBytes] = await Promise.all([
+                this.#downloadAny(videoUrls, videoPart),
+                audioUrls.length === 0 ? null : this.#downloadAny(audioUrls, audioPart)
+            ]);
             if (videoBytes === null) {
                 // 失败时可能已经写了一半，留着只会在临时目录里越攒越多
                 await rm(videoPart, { force: true });
+                await rm(audioPart, { force: true });
                 return null;
             }
             if (videoBytes / 1024 / 1024 > maxMB) {
                 this.#app.log("warn", `视频 ${formatSize(videoBytes)} 超过上限 ${maxMB}MB，已放弃`);
                 await rm(videoPart, { force: true });
+                await rm(audioPart, { force: true });
                 return null;
             }
-            const audioUrls = audio === undefined ? [] : streamUrls(audio);
-            const hasAudio = audioUrls.length === 0 ? false : (await this.#downloadAny(audioUrls, audioPart)) !== null;
+            const hasAudio = audioBytes !== null;
             if (!hasAudio)
                 await rm(audioPart, { force: true });
             if (!hasAudio) {

@@ -48,7 +48,10 @@ export async function renderCard(app, info) {
         const image = await app.ctx.render(TEMPLATE, cardData(info), {
             // 模板的 `#card` 就是那张卡片本身，截它而不是整页，省得一页空白也算进图里
             selector: "#card",
-            type: "png",
+            // 卡片是纯色背景，jpeg 体积约为 png 的四分之一，编码与上传都更快；
+            // 2 倍缩放下 90 质量的文字边缘看不出差别
+            type: "jpeg",
+            quality: 90,
             viewport: { width: 760, scale: 2 }
         });
         return Array.isArray(image) ? (image[0] ?? null) : image;
@@ -125,26 +128,29 @@ export function splitForForward(segments) {
  * @param app 运行期状态
  * @param e 触发解析的消息事件
  * @param info 视频信息
- * @param videoFile 已下载的视频路径，可无
- * @param commentsImage 已渲染好的评论图，可无
+ * @param videoFile 已下载的视频路径，也可以是仍在下载的任务：直发时卡片先走，走到视频那一步才等它
+ * @param commentsImage 已渲染好的评论图，也可以是仍在渲染的任务；无论何时就绪都排在最后发
+ * @param preRenderedSegments 卡片渲染得早时可直接传进来，省掉一次串行等待
  * @returns 是否至少成功送出一条消息
  */
-export async function deliver(app, e, info, videoFile, commentsImage) {
+export async function deliver(app, e, info, videoFile, commentsImage, preRenderedSegments) {
     const config = app.config;
-    const infoSegments = await buildInfoSegments(app, info);
+    const infoSegments = await (preRenderedSegments ?? buildInfoSegments(app, info));
     const canForward = e.isGroup && config.cardAsForward && e.bot.caps.has("forward");
     let forwarded = false;
     if (canForward) {
+        // 转发是一条消息，卡片、视频、评论图都得齐了才能发
+        const [video, comments] = await Promise.all([videoFile, commentsImage]);
         const split = splitForForward(infoSegments);
         const nodes = [];
         if (split.cover !== undefined)
             nodes.push(seg.node(split.cover, { name: "视频解析", uid: e.selfId }));
         if (split.text !== undefined)
             nodes.push(seg.node(split.text, { name: "视频解析", uid: e.selfId }));
-        if (videoFile !== undefined)
-            nodes.push(seg.node([seg.video(videoFile)], { name: "视频解析", uid: e.selfId }));
-        if (commentsImage !== undefined && commentsImage !== null) {
-            nodes.push(seg.node([commentsImage], { name: "视频解析", uid: e.selfId }));
+        if (video !== undefined)
+            nodes.push(seg.node([seg.video(video)], { name: "视频解析", uid: e.selfId }));
+        if (comments !== undefined && comments !== null) {
+            nodes.push(seg.node([comments], { name: "视频解析", uid: e.selfId }));
         }
         // 只有一个节点的转发要多点一层才看得到内容，还不如直发一张卡片
         if (nodes.length > 1) {
@@ -158,6 +164,7 @@ export async function deliver(app, e, info, videoFile, commentsImage) {
         }
     }
     if (!forwarded) {
+        // 直发：卡片一出图就发，不等视频下载；视频下载完跟着发，评论图最后
         const at = config.atSender ? [seg.at(e.sender.uid), seg.text(" ")] : [];
         try {
             await e.reply([...at, ...infoSegments]);
@@ -166,9 +173,10 @@ export async function deliver(app, e, info, videoFile, commentsImage) {
             app.log("error", "发送解析结果失败", error);
             return false;
         }
-        if (videoFile !== undefined) {
+        const video = await videoFile;
+        if (video !== undefined) {
             try {
-                await e.reply(seg.video(videoFile));
+                await e.reply(seg.video(video));
             }
             catch (error) {
                 // 信息卡片已经送到了，视频失败不该把整条解析判成失败
@@ -176,9 +184,10 @@ export async function deliver(app, e, info, videoFile, commentsImage) {
             }
         }
         // 没进转发（没开开关、平台不支持、转发失败）时评论图单独发一条
-        if (commentsImage !== undefined && commentsImage !== null) {
+        const comments = await commentsImage;
+        if (comments !== undefined && comments !== null) {
             try {
-                await e.reply(commentsImage);
+                await e.reply(comments);
             }
             catch (error) {
                 app.log("warn", "评论图发送失败", error);

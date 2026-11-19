@@ -83,7 +83,9 @@ export async function renderComments(app, total, items) {
         const image = await app.ctx.render(TEMPLATE, { total, list }, {
             // 模板的 `#comments` 就是这块评论区本身
             selector: "#comments",
-            type: "png",
+            // 评论图动辄几百 KB，jpeg 能压到四分之一，上传更快
+            type: "jpeg",
+            quality: 90,
             viewport: { width: 760, scale: 2 }
         });
         return Array.isArray(image) ? (image[0] ?? null) : image;
