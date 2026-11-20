@@ -565,6 +565,14 @@
           ["登录状态", login.loggedIn ? '<span class="tag on">已登录</span>' : '<span class="tag off">未登录</span>'],
           ["昵称", login.uname ? esc(login.uname) : "—"],
           ["UID", login.mid ? esc(login.mid) : "—"],
+          [
+            "会员",
+            login.vip === true
+              ? '<span class="tag on">是</span>'
+              : login.vip === false
+                ? '<span class="tag off">否</span>'
+                : "—"
+          ],
           ["登录时间", login.loginTime ? new Date(login.loginTime).toLocaleString("zh-CN") : "—"]
         ]
         el("account").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("")

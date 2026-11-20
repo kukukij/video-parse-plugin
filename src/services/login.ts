@@ -363,7 +363,9 @@ export class BilibiliLogin {
         return null
       }
       if (res.code !== 0) return null
-      this.#app.userInfo = { uname: res.data.uname, mid: res.data.mid, face: res.data.face }
+      // 大会员要有有效期内的状态：过期用户的 type 还在，status 已经归零
+      const vip = res.data.vip?.status === 1 && (res.data.vip.type ?? 0) > 0
+      this.#app.userInfo = { uname: res.data.uname, mid: res.data.mid, face: res.data.face, vip }
       this.#app.scheduleSnapshot()
       return res.data
     } catch (error) {

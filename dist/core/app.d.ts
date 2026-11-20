@@ -52,6 +52,8 @@ export interface StatusSnapshot {
         mid?: number;
         /** 头像 */
         face?: string;
+        /** 是否为有效期内的大会员 */
+        vip?: boolean;
         /** 登录时刻 */
         loginTime?: number;
     };
@@ -127,6 +129,7 @@ export declare class BilibiliApp {
         uname: string;
         mid: number;
         face: string;
+        vip: boolean;
     } | undefined;
     /** 统计 */
     stats: Stats;

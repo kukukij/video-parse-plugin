@@ -74,6 +74,8 @@ export interface StatusSnapshot {
     mid?: number
     /** 头像 */
     face?: string
+    /** 是否为有效期内的大会员 */
+    vip?: boolean
     /** 登录时刻 */
     loginTime?: number
   }
@@ -152,7 +154,7 @@ export class BilibiliApp {
   /** 当前凭据；未登录时 undefined */
   credential: BilibiliCredential | undefined
   /** 上一次登录校验拿到的用户信息，供快照与状态命令复用 */
-  userInfo: { uname: string; mid: number; face: string } | undefined
+  userInfo: { uname: string; mid: number; face: string; vip: boolean } | undefined
   /** 统计 */
   stats: Stats = { total: 0, today: 0, day: new Date().toDateString() }
   /** 群名与最近解析时刻 */
@@ -391,6 +393,7 @@ export class BilibiliApp {
         uname: this.userInfo?.uname,
         mid: this.userInfo?.mid,
         face: this.userInfo?.face,
+        vip: this.userInfo?.vip,
         loginTime: this.credential?.login_time
       },
       stats: { total: this.stats.total, today: this.stats.today },

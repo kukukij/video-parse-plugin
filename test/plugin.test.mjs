@@ -1060,7 +1060,7 @@ const { BilibiliLogin } = await load("services/login.js")
  * @param {object} response 轮询的完整响应（status / headers / data）
  * @returns {{ app: object, login: object, logs: string[] }} 环境
  */
-function loginFixture(response) {
+function loginFixture(response, nav = { uname: "测试账号", mid: 42, face: "" }) {
   const logs = []
   const ctx = fakeCtx()
   ctx.logger = {
@@ -1077,7 +1077,7 @@ function loginFixture(response) {
     },
     async get(url) {
       if (url.includes("/x/web-interface/nav")) {
-        return { code: 0, message: "0", data: { uname: "测试账号", mid: 42, face: "" } }
+        return { code: 0, message: "0", data: nav }
       }
       throw new Error(`未预期的请求：${url}`)
     },
@@ -1101,6 +1101,24 @@ test("扫码成功：从回跳地址的查询串里取凭据", async () => {
   assert.equal(result.credential.sessdata, "abc,def")
   assert.equal(result.credential.bili_jct, "xyz")
   assert.equal(app.isLoggedIn(), true)
+  // nav 没给 vip 字段时，快照里应当是明确的「不是会员」
+  assert.equal(app.snapshot().login.vip, false)
+  app.dispose()
+})
+
+test("快照里的会员状态按 nav 的 vip.status 判定", async () => {
+  const url = "https://passport.biligame.com/crossDomain?DedeUserID=43&SESSDATA=a%2Cb&bili_jct=x"
+  const { app, login } = loginFixture(
+    {
+      status: 200,
+      headers: {},
+      data: { code: 0, message: "0", data: { code: 0, message: "", url, refresh_token: "rt", timestamp: 1 } }
+    },
+    { uname: "会员账号", mid: 43, face: "", vip: { type: 2, status: 1 } }
+  )
+
+  await login.poll("qk")
+  assert.equal(app.snapshot().login.vip, true)
   app.dispose()
 })
 

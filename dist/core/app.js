@@ -263,6 +263,7 @@ export class BilibiliApp {
                 uname: this.userInfo?.uname,
                 mid: this.userInfo?.mid,
                 face: this.userInfo?.face,
+                vip: this.userInfo?.vip,
                 loginTime: this.credential?.login_time
             },
             stats: { total: this.stats.total, today: this.stats.today },
