@@ -8,6 +8,7 @@
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { seg } from "@yunzai-ng/core";
+import { cleanupFile } from "../services/bilibili.js";
 import { DouyinApi } from "../services/douyin.js";
 import { formatCount, formatDuration } from "../utils/format.js";
 import { resolveDouyinVideo } from "../utils/video.js";
@@ -33,10 +34,16 @@ export function registerDouyin(app) {
             return next();
         if (!DouyinApi.hasLink(e.text))
             return next();
-        const handled = await tryParse(app, api, e);
-        if (handled) {
-            e.stop();
-            return;
+        try {
+            const handled = await tryParse(app, api, e);
+            if (handled) {
+                e.stop();
+                return;
+            }
+        }
+        catch (error) {
+            // 与 B 站同一条规矩：中间件抛错会打断整条管线，连命令都轮不到
+            app.log("error", "抖音自动解析异常", error);
         }
         return next();
     }, { priority: 190 });
@@ -52,9 +59,17 @@ function shouldConsider(app, e) {
         const gid = e.group?.gid;
         if (gid !== undefined && !app.isGroupEnabled(gid))
             return false;
-        return true;
     }
-    return app.config.parseInPrivate;
+    else if (!app.config.parseInPrivate) {
+        return false;
+    }
+    // 与 B 站一致：命令、引用等以指定前缀开头的消息不当作可解析内容
+    const text = e.text;
+    for (const prefix of app.config.ignorePrefixes ?? []) {
+        if (prefix !== "" && text.startsWith(prefix))
+            return false;
+    }
+    return true;
 }
 /**
  * 走一遍解析与投递
@@ -94,7 +109,8 @@ async function tryParse(app, api, e) {
     const info = await api.fetchInfo(awemeId);
     if (info === null) {
         app.debug("抖音作品解析失败，静默跳过");
-        return true;
+        // 裸数字只是「像作品 id」，失败时不该把消息吞掉，留给后面的插件；真链接仍视为已处理
+        return /douyin\.com|iesdouyin\.com/i.test(e.text);
     }
     /**
      * 取视频文件
@@ -129,6 +145,10 @@ async function tryParse(app, api, e) {
             await sleep(3000);
         await react(e, "124");
     }
+    // 与 B 站同一条清理策略：deliver 已经等过下载，留一分钟再删，避开 QQ 侧转码
+    const video = await videoTask;
+    if (video !== undefined)
+        app.later(() => void cleanupFile(app, video), 60_000);
     return true;
 }
 /**
@@ -165,6 +185,8 @@ async function replyLive(app, api, e, roomId, pageUrl, shareUrl) {
             videoFile = file;
     }
     const sent = await deliverLive(app, e, info, "douyin", videoFile, shareUrl, cardTask);
+    if (videoFile !== undefined)
+        app.later(() => void cleanupFile(app, videoFile), 60_000);
     if (!sent)
         return;
     app.touchCooldown(gid, key);

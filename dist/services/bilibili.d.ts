@@ -249,9 +249,10 @@ export declare class BilibiliApi {
      * 时退回「只要视频轨」—— 能看画面也好过什么都发不出去，并在日志里说清原因。
      * @param info 视频信息
      * @param maxMB 体积上限（MB）
+     * @param prepared 已经拉过的 DASH 数据，卡片要在渲染前知道帧率时会先取一次
      * @returns 成品文件绝对路径；失败或超限为 null
      */
-    download(info: BilibiliVideoInfo, maxMB: number): Promise<string | null>;
+    download(info: BilibiliVideoInfo, maxMB: number, prepared?: DashPayload): Promise<string | null>;
     /**
      * 用 ffmpeg 合流
      *

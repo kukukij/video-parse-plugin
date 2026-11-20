@@ -888,16 +888,17 @@ export class BilibiliApi {
    * 时退回「只要视频轨」—— 能看画面也好过什么都发不出去，并在日志里说清原因。
    * @param info 视频信息
    * @param maxMB 体积上限（MB）
+   * @param prepared 已经拉过的 DASH 数据，卡片要在渲染前知道帧率时会先取一次
    * @returns 成品文件绝对路径；失败或超限为 null
    */
-  async download(info: BilibiliVideoInfo, maxMB: number): Promise<string | null> {
+  async download(info: BilibiliVideoInfo, maxMB: number, prepared?: DashPayload): Promise<string | null> {
     const cid = info.cid ?? info.pages?.[0]?.cid
     if (cid === undefined) {
       this.#app.log("warn", "拿不到 cid，无法下载")
       return null
     }
 
-    const dash = await this.fetchDash({ bvid: info.bvid, cid })
+    const dash = prepared ?? (await this.fetchDash({ bvid: info.bvid, cid }))
     if (dash === null) return null
 
     const { video, audio } = this.pickStreams(dash)
@@ -968,7 +969,11 @@ export class BilibiliApi {
       const merged = await this.merge(videoPart, audioPart, partialOutput)
       await rm(videoPart, { force: true })
       await rm(audioPart, { force: true })
-      if (!merged) return null
+      if (!merged) {
+        // 合流失败时 ffmpeg 可能已经写出了半个文件，留着只会占地方
+        await rm(partialOutput, { force: true })
+        return null
+      }
 
       const size = (await stat(partialOutput)).size
       if (size / 1024 / 1024 > maxMB) {

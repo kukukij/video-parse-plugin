@@ -363,7 +363,7 @@ test("转发失败时回落直发：卡片与视频各一条，视频不会重�
 
   const { e, sent } = fakeEvent({ forward: true })
   e.reply = async content => {
-    if (content?.type === "forward") throw new Error("send_group_forward_msg 超时")
+    if (content?.type === "forward") throw new Error("send_group_forward_msg 发送失败")
     sent.push(content)
     return { ok: true, messageId: "x", time: Date.now() }
   }
@@ -375,6 +375,22 @@ test("转发失败时回落直发：卡片与视频各一条，视频不会重�
     ["image", "text"]
   )
   assert.equal(sent[1].type, "video")
+})
+
+test("合并转发超时后不再补发：消息多半已在路上，补发会出两份", async () => {
+  const app = new BilibiliApp(fakeCtx())
+  await app.restore()
+  const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
+
+  const { e, sent } = fakeEvent({ forward: true })
+  e.reply = async content => {
+    if (content?.type === "forward") throw new Error("调用 send_msg 在 15000ms 内未收到响应（echo=t-1）")
+    sent.push(content)
+    return { ok: true, messageId: "x", time: Date.now() }
+  }
+
+  assert.equal(await deliver(app, e, info, "/tmp/fake.mp4"), true)
+  assert.equal(sent.length, 0)
 })
 
 test("关掉合并转发时，图片与视频分成两条发，同样不附链接", async () => {
@@ -871,6 +887,9 @@ test("卡片数据与数字格式", async () => {
   await app.restore()
   const info = await new BilibiliApi(app).parse("BV1GJ411x7h7")
   const data = cardData(info)
+  assert.equal(data.fps, "")
+  assert.equal(cardData(info, 60.001).fps, "60")
+  assert.equal(cardData(info, 29.966).fps, "30")
   assert.equal(data.view, "123.5万")
   assert.equal(data.duration, "4:31")
   assert.equal(data.pubdate, "2020-09-13")

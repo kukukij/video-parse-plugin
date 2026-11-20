@@ -25,9 +25,10 @@ export type Pending<T> = T | Promise<T>
 /**
  * 组装模板数据
  * @param info 视频信息
+ * @param fps 实际选中的流帧率；拿不到时不显示
  * @returns 模板变量
  */
-export function cardData(info: BilibiliVideoInfo): Record<string, unknown> {
+export function cardData(info: BilibiliVideoInfo, fps?: number): Record<string, unknown> {
   return {
     title: info.title,
     cover: info.pic,
@@ -46,7 +47,8 @@ export function cardData(info: BilibiliVideoInfo): Record<string, unknown> {
     tname: info.tname || "综合",
     desc: info.desc === "" ? "UP 主没有写简介" : info.desc,
     pubdate: formatDate(info.pubdate),
-    pages: info.pages?.length ?? 1
+    pages: info.pages?.length ?? 1,
+    fps: Number.isFinite(fps) && (fps ?? 0) > 0 ? String(Math.round(fps!)) : ""
   }
 }
 
@@ -54,11 +56,12 @@ export function cardData(info: BilibiliVideoInfo): Record<string, unknown> {
  * 渲染卡片图
  * @param app 运行期状态
  * @param info 视频信息
+ * @param fps 实际选中的流帧率
  * @returns 图片段；无渲染器或渲染失败为 null
  */
-export async function renderCard(app: BilibiliApp, info: BilibiliVideoInfo): Promise<Segment | null> {
+export async function renderCard(app: BilibiliApp, info: BilibiliVideoInfo, fps?: number): Promise<Segment | null> {
   try {
-    const image = await app.ctx.render(TEMPLATE, cardData(info), {
+    const image = await app.ctx.render(TEMPLATE, cardData(info, fps), {
       // 模板的 `#card` 就是那张卡片本身，截它而不是整页，省得一页空白也算进图里
       selector: "#card",
       // 卡片是纯色背景，jpeg 体积约为 png 的四分之一，编码与上传都更快；
@@ -96,11 +99,12 @@ export function infoText(info: BilibiliVideoInfo): string {
  * 标题与 UP 主，再贴一条裸网址只是刷屏（需要链接的话消息里本来就贴着）。
  * @param app 运行期状态
  * @param info 视频信息
+ * @param fps 实际选中的流帧率
  * @returns 消息段
  */
-export async function buildInfoSegments(app: BilibiliApp, info: BilibiliVideoInfo): Promise<Segment[]> {
+export async function buildInfoSegments(app: BilibiliApp, info: BilibiliVideoInfo, fps?: number): Promise<Segment[]> {
   if (app.config.renderCard) {
-    const card = await renderCard(app, info)
+    const card = await renderCard(app, info, fps)
     if (card !== null) return [card]
   }
 
@@ -177,7 +181,14 @@ export async function deliver(
         await e.reply(seg.forward(nodes, { summary: `视频：${info.title}`.slice(0, 48) }))
         forwarded = true
       } catch (error) {
-        app.log("warn", "合并转发发送失败，改为直接发送", error)
+        // 与抖音同一条判定：带视频的转发常常超时后一两秒才真正送达，此时再补发就是两份
+        const text = error instanceof Error ? error.message : String(error)
+        if (/未收到响应|TimeoutError|超时|timed? ?out/i.test(text)) {
+          app.log("warn", "合并转发超时，消息可能稍后到达，不再补发", error)
+          forwarded = true
+        } else {
+          app.log("warn", "合并转发发送失败，改为直接发送", error)
+        }
       }
     }
   }

@@ -109,17 +109,46 @@ async function runParse(app, api, e, target, gid) {
     // 下载、评论图、卡片三者互不依赖，同时起跑：卡片一出图就先直发，视频下载完跟着发，
     // 评论图无论多早就绪都留到最后
     const profile = resolveVideo(app.config.videoMode);
+    // 卡片要显示实际帧率，得先知道会选中哪一路流；这份 DASH 随后交给下载复用，不多发一次请求
+    const dashTask = (async () => {
+        if (profile === null)
+            return null;
+        const cid = info.cid ?? info.pages?.[0]?.cid;
+        if (cid === undefined)
+            return null;
+        return await api.fetchDash({ bvid: info.bvid, cid }).catch(() => null);
+    })();
+    // 不渲染卡片时没有人消费帧率，不必为它多等
+    const fpsTask = app.config.renderCard
+        ? dashTask
+            .then(dash => {
+            if (dash === null)
+                return undefined;
+            const rate = Number(api.pickStreams(dash).video?.frameRate ?? "");
+            return Number.isFinite(rate) && rate > 0 ? rate : undefined;
+        })
+            .catch(() => undefined)
+        : Promise.resolve(undefined);
     const videoTask = (async () => {
         if (profile === null)
             return undefined;
-        const file = await api.download(info, profile.maxMB);
+        // 取 DASH 失败时传 undefined，让下载按老路再试一次
+        const file = await api.download(info, profile.maxMB, (await dashTask) ?? undefined);
         if (file === null)
             app.log("warn", `视频未下载，仅发送信息：${info.bvid}`);
         return file ?? undefined;
     })();
     // 评论图先备好：转发开启时它是转发里的一个节点（聊天记录），关闭时 deliver 单独发
     const commentsTask = buildCommentsImage(app, api, e, info);
-    const sent = await deliver(app, e, info, videoTask, commentsTask, await buildInfoSegments(app, info));
+    // 帧率只是锦上添花：取流慢或失败时最多等 1.5 秒，宁可卡片上不写，也不能把它拖住
+    const fps = await Promise.race([
+        fpsTask,
+        new Promise(resolve => {
+            const timer = setTimeout(() => resolve(undefined), 1500);
+            timer.unref?.();
+        })
+    ]);
+    const sent = await deliver(app, e, info, videoTask, commentsTask, await buildInfoSegments(app, info, fps));
     if (sent) {
         await app.markParsed({ bvid: info.bvid, title: info.title, gid, group: e.group?.name });
         app.touchCooldown(gid, info.bvid);

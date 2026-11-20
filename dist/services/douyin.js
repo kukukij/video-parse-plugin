@@ -378,6 +378,8 @@ export class DouyinApi {
         // SocketError: other side closed。这里用 fetch 自己建连接、边下边写盘，顺便按体积上限提前中断
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout === "2m" ? 120_000 : 600_000);
+        /** 写流放在 try 外：正文迭代中途抛错时要能把它关掉，否则 fd 直到进程退出才释放 */
+        let stream;
         try {
             const res = await fetch(url, {
                 headers: { "User-Agent": MOBILE_UA, Referer: referer },
@@ -385,25 +387,26 @@ export class DouyinApi {
             });
             if (!res.ok || res.body === null)
                 throw new Error(`HTTP ${res.status}`);
-            const stream = createWriteStream(part);
+            stream = createWriteStream(part);
+            const sink = stream;
             const finished = new Promise((resolve, reject) => {
-                stream.on("finish", () => resolve());
-                stream.on("error", reject);
+                sink.on("finish", () => resolve());
+                sink.on("error", reject);
             });
             let written = 0;
             for await (const chunk of res.body) {
                 written += chunk.byteLength;
                 if (written > limit) {
-                    stream.destroy();
+                    sink.destroy();
                     await finished.catch(() => undefined);
                     await rm(part, { force: true });
                     this.#app.log("warn", `抖音视频超过上限 ${maxMB}MB，已放弃`);
                     return null;
                 }
-                if (!stream.write(chunk))
-                    await once(stream, "drain");
+                if (!sink.write(chunk))
+                    await once(sink, "drain");
             }
-            stream.end();
+            sink.end();
             await finished;
             const size = (await stat(part)).size;
             if (size === 0) {
@@ -415,6 +418,7 @@ export class DouyinApi {
         }
         catch (error) {
             this.#app.log("warn", "抖音视频下载失败", error);
+            stream?.destroy();
             await rm(part, { force: true });
             return null;
         }

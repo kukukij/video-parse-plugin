@@ -10,16 +10,18 @@ export type Pending<T> = T | Promise<T>;
 /**
  * 组装模板数据
  * @param info 视频信息
+ * @param fps 实际选中的流帧率；拿不到时不显示
  * @returns 模板变量
  */
-export declare function cardData(info: BilibiliVideoInfo): Record<string, unknown>;
+export declare function cardData(info: BilibiliVideoInfo, fps?: number): Record<string, unknown>;
 /**
  * 渲染卡片图
  * @param app 运行期状态
  * @param info 视频信息
+ * @param fps 实际选中的流帧率
  * @returns 图片段；无渲染器或渲染失败为 null
  */
-export declare function renderCard(app: BilibiliApp, info: BilibiliVideoInfo): Promise<Segment | null>;
+export declare function renderCard(app: BilibiliApp, info: BilibiliVideoInfo, fps?: number): Promise<Segment | null>;
 /**
  * 组装文字版信息
  * @param info 视频信息
@@ -33,9 +35,10 @@ export declare function infoText(info: BilibiliVideoInfo): string;
  * 标题与 UP 主，再贴一条裸网址只是刷屏（需要链接的话消息里本来就贴着）。
  * @param app 运行期状态
  * @param info 视频信息
+ * @param fps 实际选中的流帧率
  * @returns 消息段
  */
-export declare function buildInfoSegments(app: BilibiliApp, info: BilibiliVideoInfo): Promise<Segment[]>;
+export declare function buildInfoSegments(app: BilibiliApp, info: BilibiliVideoInfo, fps?: number): Promise<Segment[]>;
 /**
  * 把信息段拆成"封面"和"文字"两段，供合并转发分节点使用
  *
